@@ -1,10 +1,10 @@
 //! Latency harness (clap test).
 //!
-//! Record the raw mic and the "ClearNAI Microphone" at the same time, clap a few
-//! times, then: `clearnai-benchmark raw.wav clearnai.wav`
+//! Record the raw mic and the "ClearSpeak Microphone" at the same time, clap a few
+//! times, then: `clearspeak-benchmark raw.wav clearspeak.wav`
 //!
 //! Prints the lag, in ms, that maximises the cross-correlation of the two
-//! recordings (positive = ClearNAI mic is later than the raw mic).
+//! recordings (positive = ClearSpeak mic is later than the raw mic).
 //! Both files must share a sample rate; channels are down-mixed to mono.
 
 use anyhow::{bail, Result};
@@ -45,7 +45,7 @@ fn best_lag(a: &[f32], b: &[f32], max_lag: i64) -> i64 {
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 3 {
-        bail!("usage: clearnai-benchmark <raw.wav> <clearnai.wav>");
+        bail!("usage: clearspeak-benchmark <raw.wav> <clearspeak.wav>");
     }
     let (a, ra) = load_mono(&args[1])?;
     let (b, rb) = load_mono(&args[2])?;

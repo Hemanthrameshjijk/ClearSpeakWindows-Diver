@@ -1,15 +1,15 @@
 # Self-signs files with a local code-signing certificate (created on first run).
-# Usage:  .\sign-selfsigned.ps1 -Files path\to\ClearNAI-Setup.exe, path\to\clearnairt.exe
+# Usage:  .\sign-selfsigned.ps1 -Files path\to\ClearSpeak-Setup.exe, path\to\clearspeakrt.exe
 # Add -TrustOnThisPc (run as Administrator) to make this PC trust the certificate.
-# Other PCs: copy ClearNAI-Test.cer and import it into Trusted Root + Trusted Publishers.
+# Other PCs: copy ClearSpeak-Test.cer and import it into Trusted Root + Trusted Publishers.
 param(
     [Parameter(Mandatory)][string[]]$Files,
-    [string]$Subject = 'CN=ClearNAI Test Signing',
+    [string]$Subject = 'CN=ClearSpeak Test Signing',
     [switch]$TrustOnThisPc
 )
 $ErrorActionPreference = 'Stop'
 
-$cer = Join-Path $PSScriptRoot 'ClearNAI-Test.cer'
+$cer = Join-Path $PSScriptRoot 'ClearSpeak-Test.cer'
 $cert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
     Where-Object { $_.Subject -eq $Subject -and $_.NotAfter -gt (Get-Date) } |
     Select-Object -First 1

@@ -17,7 +17,7 @@ Abstract:
 
 #include "savedata.h"
 #include "tonegenerator.h"
-#include "clearnaipipe.h"
+#include "clearspeakpipe.h"
 
 
 //
@@ -122,7 +122,7 @@ protected:
     ULONG                       m_ulContentId;
     CSaveData                   m_SaveData;
     ToneGenerator               m_ToneGenerator;
-    CLEARNAI_PIPE_CURSOR        m_PipeCursor;
+    CLEARSPEAK_PIPE_CURSOR        m_PipeCursor;
     GUID                        m_SignalProcessingMode;
     BOOLEAN                     m_bEoSReceived;
     BOOLEAN                     m_bLastBufferRendered;

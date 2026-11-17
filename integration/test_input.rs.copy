@@ -1,10 +1,10 @@
 //! Hidden test microphone, for machines with no microphone (the Hyper-V test VM).
 //!
-//! Only active when the environment variable `CLEARNAI_TEST_MIC` is set; normal use never sees it.
-//!   CLEARNAI_TEST_MIC=tone          a 440 Hz tone
-//!   CLEARNAI_TEST_MIC=C:\path.wav   a WAV file (PCM16 or float32, any rate/channels), looped
+//! Only active when the environment variable `CLEARSPEAK_TEST_MIC` is set; normal use never sees it.
+//!   CLEARSPEAK_TEST_MIC=tone          a 440 Hz tone
+//!   CLEARSPEAK_TEST_MIC=C:\path.wav   a WAV file (PCM16 or float32, any rate/channels), looped
 //! The engine then feeds this instead of opening a physical microphone, so the whole chain
-//! (cleanup stages -> ClearNAI driver -> "ClearNAI Microphone") can be exercised without any audio hardware.
+//! (cleanup stages -> ClearSpeak driver -> "ClearSpeak Microphone") can be exercised without any audio hardware.
 //!
 //! Additive and removable together with `driver_pipe.rs` (see `ClearnaiWindows-Diver/integration/README.md`).
 
@@ -20,20 +20,20 @@ pub enum Source {
     Wav(Vec<f32>),
 }
 
-/// The configured test source, if `CLEARNAI_TEST_MIC` is set. A bad path or file is reported and ignored.
+/// The configured test source, if `CLEARSPEAK_TEST_MIC` is set. A bad path or file is reported and ignored.
 pub fn from_env() -> Option<Source> {
-    let v = std::env::var("CLEARNAI_TEST_MIC").ok()?;
+    let v = std::env::var("CLEARSPEAK_TEST_MIC").ok()?;
     if v.eq_ignore_ascii_case("tone") {
         return Some(Source::Tone);
     }
     match std::fs::read(&v).map_err(|e| e.to_string()).and_then(|b| wav_to_mono_48k(&b)) {
         Ok(samples) if !samples.is_empty() => Some(Source::Wav(samples)),
         Ok(_) => {
-            eprintln!("[clearnai] CLEARNAI_TEST_MIC '{v}' has no audio; using the real microphone.");
+            eprintln!("[clearspeak] CLEARSPEAK_TEST_MIC '{v}' has no audio; using the real microphone.");
             None
         }
         Err(e) => {
-            eprintln!("[clearnai] CLEARNAI_TEST_MIC '{v}' unusable ({e}); using the real microphone.");
+            eprintln!("[clearspeak] CLEARSPEAK_TEST_MIC '{v}' unusable ({e}); using the real microphone.");
             None
         }
     }
@@ -41,7 +41,7 @@ pub fn from_env() -> Option<Source> {
 
 /// Feeds the source into `producer` at real-time speed (one 10 ms frame every 10 ms), forever.
 pub fn start(source: Source, mut producer: Producer<f32>) {
-    let _ = thread::Builder::new().name("clearnai-test-mic".into()).spawn(move || {
+    let _ = thread::Builder::new().name("clearspeak-test-mic".into()).spawn(move || {
         let step = 2.0 * std::f32::consts::PI * 440.0 / SAMPLE_RATE_HZ as f32;
         let (mut phase, mut pos) = (0.0f32, 0usize);
         let start = Instant::now();
@@ -70,7 +70,7 @@ pub fn start(source: Source, mut producer: Producer<f32>) {
             }
         }
     });
-    eprintln!("[clearnai] TEST MICROPHONE active (CLEARNAI_TEST_MIC): no physical microphone is opened.");
+    eprintln!("[clearspeak] TEST MICROPHONE active (CLEARSPEAK_TEST_MIC): no physical microphone is opened.");
 }
 
 fn le16(b: &[u8], o: usize) -> u16 {

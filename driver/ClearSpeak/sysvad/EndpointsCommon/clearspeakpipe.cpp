@@ -1,6 +1,6 @@
 /*++
 
-ClearNAI engine -> driver audio pipe. See clearnaipipe.h.
+ClearSpeak engine -> driver audio pipe. See clearspeakpipe.h.
 
 Locking: one spin lock guards the ring and its write position. Writers
 (the engine's IOCTL) run at PASSIVE_LEVEL, readers (capture stream position
@@ -11,16 +11,16 @@ and takes the lock with KeAcquireSpinLock.
 
 #include <sysvad.h>
 #include <wdmsec.h>
-#include "clearnaipipe.h"
+#include "clearspeakpipe.h"
 
-#define CLEARNAI_POOLTAG        'ianC'
+#define CLEARSPEAK_POOLTAG        'ianC'
 
-#define RING_SAMPLES            CLEARNAI_PIPE_RATE          // 1 s of mono PCM16
-#define MAX_LATENCY_SAMPLES     (CLEARNAI_PIPE_RATE / 10)   // jump forward past 100 ms of backlog
-#define PREFILL_SAMPLES         (CLEARNAI_PIPE_RATE * 3 / 100)  // jitter margin: start readers 30 ms behind the writer
+#define RING_SAMPLES            CLEARSPEAK_PIPE_RATE          // 1 s of mono PCM16
+#define MAX_LATENCY_SAMPLES     (CLEARSPEAK_PIPE_RATE / 10)   // jump forward past 100 ms of backlog
+#define PREFILL_SAMPLES         (CLEARSPEAK_PIPE_RATE * 3 / 100)  // jitter margin: start readers 30 ms behind the writer
 #define ENGINE_TIMEOUT_100NS    (2500000LL)                 // 250 ms without writes = engine gone
 
-static const GUID ClearNaiControlClassGuid =
+static const GUID ClearSpeakControlClassGuid =
     { 0x6b1b2f6e, 0x4f13, 0x4b8c, { 0x9d, 0x5a, 0x7c, 0x1e, 0x2a, 0x9f, 0x3d, 0x41 } };
 
 static KSPIN_LOCK       g_PipeLock;
@@ -28,10 +28,10 @@ static SHORT           *g_Ring = NULL;
 static ULONGLONG        g_WritePos = 0;         // absolute count of source samples written
 static LONGLONG         g_LastWriteTime = 0;    // KeQueryInterruptTime of the last write
 static PDEVICE_OBJECT   g_ControlDevice = NULL;
-static CLEARNAI_PIPE_STATS g_Stats;             // guarded by g_PipeLock
+static CLEARSPEAK_PIPE_STATS g_Stats;             // guarded by g_PipeLock
 static PDRIVER_DISPATCH g_SavedDispatch[IRP_MJ_MAXIMUM_FUNCTION + 1];
 
-DRIVER_DISPATCH ClearNaiDispatch;
+DRIVER_DISPATCH ClearSpeakDispatch;
 
 #pragma code_seg()
 
@@ -48,7 +48,7 @@ static NTSTATUS HandleWrite(_In_ PIRP Irp, _In_ PIO_STACK_LOCATION Stack)
     ULONG bytes = Stack->Parameters.DeviceIoControl.InputBufferLength;
     const SHORT *src = (const SHORT *)Irp->AssociatedIrp.SystemBuffer;
 
-    if (src == NULL || bytes == 0 || (bytes & 1) != 0 || bytes > CLEARNAI_PIPE_MAX_WRITE)
+    if (src == NULL || bytes == 0 || (bytes & 1) != 0 || bytes > CLEARSPEAK_PIPE_MAX_WRITE)
     {
         return STATUS_INVALID_PARAMETER;
     }
@@ -85,7 +85,7 @@ static NTSTATUS HandleWrite(_In_ PIRP Irp, _In_ PIO_STACK_LOCATION Stack)
 }
 
 _Use_decl_annotations_
-NTSTATUS ClearNaiDispatch(PDEVICE_OBJECT DeviceObject, PIRP Irp)
+NTSTATUS ClearSpeakDispatch(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 {
     PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
     UCHAR major = stack->MajorFunction;
@@ -99,23 +99,23 @@ NTSTATUS ClearNaiDispatch(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         case IRP_MJ_CLOSE:
             return CompleteIrp(Irp, STATUS_SUCCESS, 0);
         case IRP_MJ_DEVICE_CONTROL:
-            if (stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_CLEARNAI_WRITE)
+            if (stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_CLEARSPEAK_WRITE)
             {
                 NTSTATUS st = HandleWrite(Irp, stack);
                 return CompleteIrp(Irp, st, NT_SUCCESS(st) ? stack->Parameters.DeviceIoControl.InputBufferLength : 0);
             }
-            if (stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_CLEARNAI_STATS)
+            if (stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_CLEARSPEAK_STATS)
             {
                 ULONG outLen = stack->Parameters.DeviceIoControl.OutputBufferLength;
-                if (Irp->AssociatedIrp.SystemBuffer == NULL || outLen < sizeof(CLEARNAI_PIPE_STATS))
+                if (Irp->AssociatedIrp.SystemBuffer == NULL || outLen < sizeof(CLEARSPEAK_PIPE_STATS))
                 {
                     return CompleteIrp(Irp, STATUS_BUFFER_TOO_SMALL, 0);
                 }
                 KIRQL irql;
                 KeAcquireSpinLock(&g_PipeLock, &irql);
-                *(CLEARNAI_PIPE_STATS *)Irp->AssociatedIrp.SystemBuffer = g_Stats;
+                *(CLEARSPEAK_PIPE_STATS *)Irp->AssociatedIrp.SystemBuffer = g_Stats;
                 KeReleaseSpinLock(&g_PipeLock, irql);
-                return CompleteIrp(Irp, STATUS_SUCCESS, sizeof(CLEARNAI_PIPE_STATS));
+                return CompleteIrp(Irp, STATUS_SUCCESS, sizeof(CLEARSPEAK_PIPE_STATS));
             }
             return CompleteIrp(Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
         default:
@@ -131,7 +131,7 @@ NTSTATUS ClearNaiDispatch(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     return CompleteIrp(Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
 }
 
-VOID ClearNaiPipe_ResetCursor(_Out_ CLEARNAI_PIPE_CURSOR *Cursor)
+VOID ClearSpeakPipe_ResetCursor(_Out_ CLEARSPEAK_PIPE_CURSOR *Cursor)
 {
     Cursor->Pos = 0;
     Cursor->Frac = 0;
@@ -139,8 +139,8 @@ VOID ClearNaiPipe_ResetCursor(_Out_ CLEARNAI_PIPE_CURSOR *Cursor)
     Cursor->Rebuffer = FALSE;
 }
 
-VOID ClearNaiPipe_ReadFrames(
-    _Inout_ CLEARNAI_PIPE_CURSOR *Cursor,
+VOID ClearSpeakPipe_ReadFrames(
+    _Inout_ CLEARSPEAK_PIPE_CURSOR *Cursor,
     _Out_writes_bytes_(FrameCount * Channels * (BitsPerSample / 8)) PUCHAR Dst,
     _In_ ULONG FrameCount,
     _In_ ULONG Channels,
@@ -163,7 +163,7 @@ VOID ClearNaiPipe_ReadFrames(
         return;
     }
 
-    ULONG step = (ULONG)(((ULONGLONG)CLEARNAI_PIPE_RATE << 16) / SampleRate);
+    ULONG step = (ULONG)(((ULONGLONG)CLEARSPEAK_PIPE_RATE << 16) / SampleRate);
 
     KIRQL irql;
     KeAcquireSpinLock(&g_PipeLock, &irql);
@@ -264,13 +264,13 @@ VOID ClearNaiPipe_ReadFrames(
 
 #pragma code_seg("PAGE")
 
-NTSTATUS ClearNaiPipe_Init(_In_ PDRIVER_OBJECT DriverObject)
+NTSTATUS ClearSpeakPipe_Init(_In_ PDRIVER_OBJECT DriverObject)
 {
     PAGED_CODE();
 
     NTSTATUS status;
-    UNICODE_STRING devName = RTL_CONSTANT_STRING(L"\\Device\\ClearNAIPipe");
-    UNICODE_STRING linkName = RTL_CONSTANT_STRING(L"\\DosDevices\\ClearNAIPipe");
+    UNICODE_STRING devName = RTL_CONSTANT_STRING(L"\\Device\\ClearSpeakPipe");
+    UNICODE_STRING linkName = RTL_CONSTANT_STRING(L"\\DosDevices\\ClearSpeakPipe");
     // System and Administrators: all access. Authenticated users: read/write (engine runs unelevated).
     UNICODE_STRING sddl = RTL_CONSTANT_STRING(L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)");
 
@@ -280,7 +280,7 @@ NTSTATUS ClearNaiPipe_Init(_In_ PDRIVER_OBJECT DriverObject)
     RtlZeroMemory(&g_Stats, sizeof(g_Stats));
     g_Stats.MinBacklog = (ULONGLONG)-1;     // "none seen yet"
 
-    g_Ring = (SHORT *)ExAllocatePool2(POOL_FLAG_NON_PAGED, RING_SAMPLES * sizeof(SHORT), CLEARNAI_POOLTAG);
+    g_Ring = (SHORT *)ExAllocatePool2(POOL_FLAG_NON_PAGED, RING_SAMPLES * sizeof(SHORT), CLEARSPEAK_POOLTAG);
     if (g_Ring == NULL)
     {
         return STATUS_INSUFFICIENT_RESOURCES;
@@ -288,7 +288,7 @@ NTSTATUS ClearNaiPipe_Init(_In_ PDRIVER_OBJECT DriverObject)
 
     status = IoCreateDeviceSecure(
         DriverObject, 0, &devName, FILE_DEVICE_UNKNOWN, FILE_DEVICE_SECURE_OPEN, FALSE,
-        &sddl, &ClearNaiControlClassGuid, &g_ControlDevice);
+        &sddl, &ClearSpeakControlClassGuid, &g_ControlDevice);
     if (!NT_SUCCESS(status))
     {
         goto Fail;
@@ -311,7 +311,7 @@ NTSTATUS ClearNaiPipe_Init(_In_ PDRIVER_OBJECT DriverObject)
         g_SavedDispatch[i] = DriverObject->MajorFunction[i];
         if (i != IRP_MJ_PNP && i != IRP_MJ_POWER && i != IRP_MJ_SYSTEM_CONTROL)
         {
-            DriverObject->MajorFunction[i] = ClearNaiDispatch;
+            DriverObject->MajorFunction[i] = ClearSpeakDispatch;
         }
     }
 
@@ -319,16 +319,16 @@ NTSTATUS ClearNaiPipe_Init(_In_ PDRIVER_OBJECT DriverObject)
     return STATUS_SUCCESS;
 
 Fail:
-    ExFreePoolWithTag(g_Ring, CLEARNAI_POOLTAG);
+    ExFreePoolWithTag(g_Ring, CLEARSPEAK_POOLTAG);
     g_Ring = NULL;
     return status;
 }
 
-VOID ClearNaiPipe_Cleanup(VOID)
+VOID ClearSpeakPipe_Cleanup(VOID)
 {
     PAGED_CODE();
 
-    UNICODE_STRING linkName = RTL_CONSTANT_STRING(L"\\DosDevices\\ClearNAIPipe");
+    UNICODE_STRING linkName = RTL_CONSTANT_STRING(L"\\DosDevices\\ClearSpeakPipe");
 
     if (g_ControlDevice != NULL)
     {
@@ -345,6 +345,6 @@ VOID ClearNaiPipe_Cleanup(VOID)
     KeReleaseSpinLock(&g_PipeLock, irql);
     if (ring != NULL)
     {
-        ExFreePoolWithTag(ring, CLEARNAI_POOLTAG);
+        ExFreePoolWithTag(ring, CLEARSPEAK_POOLTAG);
     }
 }

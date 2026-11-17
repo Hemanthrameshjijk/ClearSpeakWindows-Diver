@@ -6,7 +6,7 @@
 //! Echo removal (`crates/aec`) is wired in: the speaker pipeline copies the frames it plays into a ring, and the
 //! mic pipeline subtracts their echo from the raw mic. The reference is taken from the pipeline output rather
 //! than a WASAPI loopback tap (the loopback tap was unstable on real hardware), so it only cancels call audio
-//! that ClearNAI itself plays. `audio_io::loopback` still exists but is not used here.
+//! that ClearSpeak itself plays. `audio_io::loopback` still exists but is not used here.
 //!
 //! This entire module only exists on Windows (`#![cfg(windows)]`) because
 //! it is the only place in this crate that touches `audio_io::capture` and
@@ -20,7 +20,7 @@
 //! This module compiles and its unit tests pass on a real Windows machine
 //! with a real `x86_64-pc-windows-gnu` toolchain (not just cross-compile
 //! type-checked from Linux, as earlier revisions of this module were). It
-//! has still never been *run* as the actual `clearnairt.exe` binary against
+//! has still never been *run* as the actual `clearspeakrt.exe` binary against
 //! real hardware in that environment: no real WASAPI device, no real
 //! `weya_nc.dll` session, no real VB-Cable install were exercised there.
 //! Every claim about behavior below is a claim about what the code is
@@ -170,7 +170,7 @@ impl LiveDeviceSwitcher for LiveAudioSwitcher {
             }
             Err(e) => {
                 crate::log_error!(
-                    "[clearnairt] failed to switch physical microphone live to {device_id:?} \
+                    "[clearspeakrt] failed to switch physical microphone live to {device_id:?} \
                      ({e:#}); the previous physical microphone (if any) keeps running."
                 );
             }
@@ -193,7 +193,7 @@ impl LiveDeviceSwitcher for LiveAudioSwitcher {
                     }
                     Err(e) => {
                         crate::log_error!(
-                            "[clearnairt] failed to switch virtual mic target live to '{id}' \
+                            "[clearspeakrt] failed to switch virtual mic target live to '{id}' \
                              ({e:#}); the previous virtual mic target (if any) keeps running."
                         );
                     }
@@ -226,7 +226,7 @@ impl LiveDeviceSwitcher for LiveAudioSwitcher {
                     }
                     Err(e) => {
                         crate::log_error!(
-                            "[clearnairt] failed to switch speaker-source capture live to '{id}' \
+                            "[clearspeakrt] failed to switch speaker-source capture live to '{id}' \
                              ({e:#}); the previous speaker-source device (if any) keeps running."
                         );
                     }
@@ -266,7 +266,7 @@ impl LiveDeviceSwitcher for LiveAudioSwitcher {
             }
             Err(e) => {
                 crate::log_error!(
-                    "[clearnairt] failed to switch real speaker output live to {device_id:?} \
+                    "[clearspeakrt] failed to switch real speaker output live to {device_id:?} \
                      ({e:#}); the previous speaker output (if any) keeps running."
                 );
             }
@@ -287,7 +287,7 @@ impl LiveDeviceSwitcher for LiveAudioSwitcher {
                     }
                     Err(e) => {
                         crate::log_error!(
-                            "[clearnairt] failed to switch monitor output live to '{id}' ({e:#}); \
+                            "[clearspeakrt] failed to switch monitor output live to '{id}' ({e:#}); \
                              the previous monitor output (if any) keeps running."
                         );
                     }
@@ -325,7 +325,7 @@ pub struct BootstrapOutcome {
 pub fn enumerate_devices() -> DeviceList {
     let render = devices::list_render_devices()
         .unwrap_or_else(|e| {
-            crate::log_error!("[clearnairt] WARNING: failed to enumerate render devices: {e:#}");
+            crate::log_error!("[clearspeakrt] WARNING: failed to enumerate render devices: {e:#}");
             Vec::new()
         })
         .into_iter()
@@ -333,7 +333,7 @@ pub fn enumerate_devices() -> DeviceList {
         .collect();
     let capture = devices::list_capture_devices()
         .unwrap_or_else(|e| {
-            crate::log_error!("[clearnairt] WARNING: failed to enumerate capture devices: {e:#}");
+            crate::log_error!("[clearspeakrt] WARNING: failed to enumerate capture devices: {e:#}");
             Vec::new()
         })
         .into_iter()
@@ -393,7 +393,7 @@ pub fn start(
     let mut warnings = Vec::new();
 
     // --- BVC: one real load attempt per independent pipeline instance. ---
-    // `bvc_assets_dir` is `setup::app_data_dir()` (`%LOCALAPPDATA%\ClearNAI`),
+    // `bvc_assets_dir` is `setup::app_data_dir()` (`%LOCALAPPDATA%\ClearSpeak`),
     // where `main.rs::bootstrap` has already self-extracted the embedded
     // `weya_nc.dll` + model bundle via `setup::ensure_bvc_assets_extracted`
     // before calling here - no more "next to the exe" file placement.
@@ -459,7 +459,7 @@ pub fn start(
                 "mic BVC",
                 Box::new(stage),
                 BVC_WATCHDOG_TIMEOUT,
-                |msg| crate::log_error!("[clearnairt] {msg}"),
+                |msg| crate::log_error!("[clearspeakrt] {msg}"),
                 || Box::new(audio_io::mmcss::elevate_current_thread()),
             );
             mic_hush_status = Some(watchdog.status());
@@ -485,7 +485,7 @@ pub fn start(
                     "mic DeepFilterNet",
                     Box::new(engine),
                     BVC_WATCHDOG_TIMEOUT,
-                    |msg| crate::log_error!("[clearnairt] {msg}"),
+                    |msg| crate::log_error!("[clearspeakrt] {msg}"),
                     || Box::new(audio_io::mmcss::elevate_current_thread()),
                 )),
             ),
@@ -526,7 +526,7 @@ pub fn start(
                 "mic Hush (bpo_v1)",
                 Box::new(stage),
                 BVC_WATCHDOG_TIMEOUT,
-                |msg| crate::log_error!("[clearnairt] {msg}"),
+                |msg| crate::log_error!("[clearspeakrt] {msg}"),
                 || Box::new(audio_io::mmcss::elevate_current_thread()),
             );
             mic_bpo_v1_status = Some(watchdog.status());
@@ -553,7 +553,7 @@ pub fn start(
             "speaker BVC (Hush)",
             Box::new(stage),
             BVC_WATCHDOG_TIMEOUT,
-            |msg| crate::log_error!("[clearnairt] {msg}"),
+            |msg| crate::log_error!("[clearspeakrt] {msg}"),
             || Box::new(audio_io::mmcss::elevate_current_thread()),
         )),
         Err(_) => Box::new(NoOpStage("Speaker BVC Hush (unavailable)")),
@@ -571,7 +571,7 @@ pub fn start(
                 "speaker BVC (DeepFilterNet)",
                 Box::new(engine),
                 BVC_WATCHDOG_TIMEOUT,
-                |msg| crate::log_error!("[clearnairt] {msg}"),
+                |msg| crate::log_error!("[clearspeakrt] {msg}"),
                 || Box::new(audio_io::mmcss::elevate_current_thread()),
             )),
         ),
@@ -670,7 +670,7 @@ pub fn start(
         let mut cfg = accent_onnx::pipeline::AccentConfig::new(crate::setup::onnxruntime_dll_path(bvc_assets_dir));
         cfg.initial_voice = settings.accent_effective_voice();
         crate::log_info!(
-            "[clearnairt] detected {} logical cores; accent ORT threads = {}",
+            "[clearspeakrt] detected {} logical cores; accent ORT threads = {}",
             std::thread::available_parallelism().map_or(0, |n| n.get()),
             cfg.threads
         );
@@ -690,7 +690,7 @@ pub fn start(
     let transcript_stage = {
         let mut cfg = asr_onnx::pipeline::TranscriptConfig::new(crate::setup::onnxruntime_dll_path(bvc_assets_dir));
         cfg.initial_enabled = settings.transcript_on;
-        crate::log_info!("[clearnairt] transcript ORT threads = {}", cfg.threads);
+        crate::log_info!("[clearspeakrt] transcript ORT threads = {}", cfg.threads);
         cfg.save_dir = Some(crate::setup::app_data_dir().join("transcripts"));
         let (stage, transcript_handle) = asr_onnx::pipeline::start(cfg);
         handles.transcript = transcript_handle;
@@ -720,7 +720,7 @@ pub fn start(
         let capture = enumerate_devices().capture;
         let present = capture.is_empty() || capture.iter().any(|d| &d.id == id);
         if !present {
-            crate::log_error!("[clearnairt] saved microphone is not connected; using the default microphone instead");
+            crate::log_error!("[clearspeakrt] saved microphone is not connected; using the default microphone instead");
         }
         present
     });
@@ -799,7 +799,7 @@ pub fn start(
 
     // --- Driver-transport (see docs/DRIVER_PLAN.md): writes the mic
     // pipeline's final processed frame into a named shared-memory section,
-    // ready for a future ClearNAI virtual audio driver to read - see
+    // ready for a future ClearSpeak virtual audio driver to read - see
     // `driver_transport`'s crate docs for the exact wire format. No reader
     // exists yet (no driver has been built), so this is a one-sided write
     // for now; failure to create the section is non-fatal (same graceful-
@@ -981,7 +981,7 @@ fn trim_backlog(consumer: &SwapConsumer, counters: &dsp_core::FrameCounters) {
     if dropped > 0 {
         counters.dropped_frames.fetch_add(1, Ordering::Relaxed);
         crate::log_error!(
-            "[clearnairt] mic input backlog exceeded {MAX_TOLERATED_BACKLOG_SAMPLES} samples \
+            "[clearspeakrt] mic input backlog exceeded {MAX_TOLERATED_BACKLOG_SAMPLES} samples \
              (clock drift between capture and render devices); trimmed {dropped} samples to keep \
              latency bounded"
         );
@@ -1025,7 +1025,7 @@ fn push_frame_to_fixed(producer: &mut Producer<f32>, frame: &[f32]) {
         if producer.push(sample).is_err() {
             // Downstream (render thread) isn't keeping up; drop the rest of
             // this frame rather than block the processing thread.
-            crate::log_error!("[clearnairt] output ring buffer full, dropping frame");
+            crate::log_error!("[clearspeakrt] output ring buffer full, dropping frame");
             return;
         }
     }
@@ -1058,7 +1058,7 @@ fn spawn_mic_pipeline(
     mut echo_ref: dsp_core::Consumer<f32>,
 ) -> Result<()> {
     thread::Builder::new()
-        .name("clearnai-mic-pipeline".into())
+        .name("clearspeak-mic-pipeline".into())
         .spawn(move || {
             // Best-effort: see `audio_io::mmcss` - this thread runs the
             // Noise/BVC/Studio chain every 10ms and is exactly the kind of
@@ -1252,7 +1252,7 @@ fn spawn_speaker_pipeline(
     mut echo_ref: Producer<f32>,
 ) -> Result<()> {
     thread::Builder::new()
-        .name("clearnai-speaker-pipeline".into())
+        .name("clearspeak-speaker-pipeline".into())
         .spawn(move || {
             let _mmcss_guard = audio_io::mmcss::elevate_current_thread();
             let mut frame = vec![0.0f32; FRAME_SAMPLES];

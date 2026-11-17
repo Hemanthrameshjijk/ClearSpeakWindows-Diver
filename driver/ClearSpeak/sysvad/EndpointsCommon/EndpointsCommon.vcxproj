@@ -177,7 +177,7 @@
     <ClCompile Include="a2dphpspeakertopo.cpp" />
     <ClCompile Include="a2dphptopo.cpp" />
     <ClCompile Include="AudioModuleHelper.cpp" />
-    <ClCompile Include="clearnaipipe.cpp" />
+    <ClCompile Include="clearspeakpipe.cpp" />
     <ClCompile Include="bthhfpmictopo.cpp" />
     <ClCompile Include="bthhfpminwavert.cpp" />
     <ClCompile Include="bthhfpspeakertopo.cpp" />

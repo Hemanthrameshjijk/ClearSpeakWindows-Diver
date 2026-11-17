@@ -1,4 +1,4 @@
-// Minimal stand-ins for the kernel APIs used by clearnaipipe.cpp, so its logic can be unit-tested as a normal program.
+// Minimal stand-ins for the kernel APIs used by clearspeakpipe.cpp, so its logic can be unit-tested as a normal program.
 // Test only: none of this is part of the driver.
 #pragma once
 #include <windows.h>

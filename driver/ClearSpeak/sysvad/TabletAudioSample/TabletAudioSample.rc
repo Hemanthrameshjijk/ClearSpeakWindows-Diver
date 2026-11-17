@@ -17,12 +17,12 @@ Abstract:
 
 #define VER_FILETYPE                VFT_DRV
 #define VER_FILESUBTYPE             VFT2_DRV_SOUND
-#define VER_FILEDESCRIPTION_STR     "ClearNAI Virtual Audio Driver"
-#define VER_INTERNALNAME_STR        "ClearNAI.sys"
-#define VER_ORIGINALFILENAME_STR    "ClearNAI.sys"
+#define VER_FILEDESCRIPTION_STR     "ClearSpeak Virtual Audio Driver"
+#define VER_INTERNALNAME_STR        "ClearSpeak.sys"
+#define VER_ORIGINALFILENAME_STR    "ClearSpeak.sys"
 
 #define VER_LEGALCOPYRIGHT_YEARS    "2026"
-#define VER_LEGALCOPYRIGHT_STR	    "Copyright (C) ClearNAI " VER_LEGALCOPYRIGHT_YEARS ". Portions Copyright (C) Microsoft Corporation (MIT)."
+#define VER_LEGALCOPYRIGHT_STR	    "Copyright (C) ClearSpeak " VER_LEGALCOPYRIGHT_YEARS ". Portions Copyright (C) Microsoft Corporation (MIT)."
 
 #include "common.ver"
 

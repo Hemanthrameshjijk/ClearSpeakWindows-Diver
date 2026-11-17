@@ -227,7 +227,7 @@ Return Value:
     m_ullPlayPosition = 0;
     m_ullWritePosition = 0;
     m_ullDmaTimeStamp = 0;
-    ClearNaiPipe_ResetCursor(&m_PipeCursor);
+    ClearSpeakPipe_ResetCursor(&m_PipeCursor);
     m_hnsElapsedTimeCarryForward = 0;
     m_ullLastDPCTimeStamp = 0;
     m_hnsDPCTimeCarryForward = 0;
@@ -1344,7 +1344,7 @@ NTSTATUS CMiniportWaveRTStream::SetState
             }
             ullPerfCounterTemp = KeQueryPerformanceCounter(&m_ullPerformanceCounterFrequency);
             m_ullLastDPCTimeStamp = m_ullDmaTimeStamp = KSCONVERT_PERFORMANCE_TIME(m_ullPerformanceCounterFrequency.QuadPart, ullPerfCounterTemp);
-            ClearNaiPipe_ResetCursor(&m_PipeCursor);
+            ClearSpeakPipe_ResetCursor(&m_PipeCursor);
 
             if (m_ulNotificationIntervalMs > 0)
             {
@@ -1518,12 +1518,12 @@ ByteDisplacement - # of bytes to process.
     while (ByteDisplacement > 0)
     {
         ULONG runWrite = min(ByteDisplacement, m_ulDmaBufferSize - bufferOffset);
-        // ClearNAI: capture data comes from the engine pipe (silence when the engine is absent).
+        // ClearSpeak: capture data comes from the engine pipe (silence when the engine is absent).
         ULONG frameBytes = m_pWfExt->Format.nBlockAlign;
         if (frameBytes != 0)
         {
             ULONG whole = runWrite / frameBytes * frameBytes;
-            ClearNaiPipe_ReadFrames(&m_PipeCursor, m_pDmaBuffer + bufferOffset, whole / frameBytes,
+            ClearSpeakPipe_ReadFrames(&m_PipeCursor, m_pDmaBuffer + bufferOffset, whole / frameBytes,
                                     m_pWfExt->Format.nChannels, m_pWfExt->Format.wBitsPerSample,
                                     m_pWfExt->Format.nSamplesPerSec);
             if (whole < runWrite)

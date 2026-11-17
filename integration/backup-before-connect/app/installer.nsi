@@ -1,4 +1,4 @@
-; ClearNAI Windows installer (NSIS script).
+; ClearSpeak Windows installer (NSIS script).
 ;
 ; Builds a proper Windows installer instead of the earlier raw-exe +
 ; uninstall.ps1 approach: a per-user install (no admin elevation needed),
@@ -7,8 +7,8 @@
 ; NSIS-auto-generated Uninstall.exe.
 ;
 ; Deliberately installs to the SAME directory the app already uses for its
-; self-extracted BVC assets (%LOCALAPPDATA%\ClearNAI\weya_nc.dll, the model
-; tar.gz, onnxruntime.dll, settings.json, clearnai.log - see
+; self-extracted BVC assets (%LOCALAPPDATA%\ClearSpeak\weya_nc.dll, the model
+; tar.gz, onnxruntime.dll, settings.json, clearspeak.log - see
 ; app/src/setup.rs::app_data_dir)
 ; rather than Program Files: this app never needs admin rights for anything
 ; else it does, so an admin-requiring install would be an unnecessary extra
@@ -19,13 +19,13 @@
 ;
 ; Built by CI via `makensis installer.nsi` (see .github/workflows/windows.yml)
 ; from the repo root's `app` directory, after `cargo build --release` has
-; already produced target\release\clearnairt.exe two directories up.
+; already produced target\release\clearspeakrt.exe two directories up.
 
-!define APP_NAME "ClearNAI"
+!define APP_NAME "ClearSpeak"
 ; Two programs (see app/src/lib.rs): the window and the background engine that keeps the audio running.
-!define APP_EXE "clearnai.exe"
-!define ENGINE_EXE "clearnai-engine.exe"
-!define APP_PUBLISHER "ClearNAI"
+!define APP_EXE "clearspeak.exe"
+!define ENGINE_EXE "clearspeak-engine.exe"
+!define APP_PUBLISHER "ClearSpeak"
 !define APP_VERSION "0.1.0"
 !define UNINSTALL_REG_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
 
@@ -40,7 +40,7 @@
 ; The WHOLE VB-CABLE driver pack folder (setup exe + .inf/.cat/.sys). The setup exe alone fails with "Missing inf file or
 ; Driver package corrupted": it needs the driver files next to it.
 !define VBCABLE_DIR "vendor\vbcable"
-!define VBCABLE_EXE "$TEMP\ClearNAI-VBCABLE\VBCABLE_Setup_x64.exe"
+!define VBCABLE_EXE "$TEMP\ClearSpeak-VBCABLE\VBCABLE_Setup_x64.exe"
 
 ; ~500 MB of models: solid LZMA gives the smallest download (slower to build, fine for CI/release).
 SetCompressor /SOLID lzma
@@ -55,26 +55,26 @@ SetCompressor /SOLID lzma
 ; behaves. NEVER use `-u` here (that uninstalls).
 !define VBCABLE_ARGS ""
 
-; ClearNAI logo for the installer and uninstaller executables (generated from assets\logo_mark_light.svg).
-Icon "assets\clearnai.ico"
-UninstallIcon "assets\clearnai.ico"
+; ClearSpeak logo for the installer and uninstaller executables (generated from assets\logo_mark_light.svg).
+Icon "assets\clearspeak.ico"
+UninstallIcon "assets\clearspeak.ico"
 
 Name "${APP_NAME}"
-OutFile "..\target\release\ClearNAI-Setup.exe"
-InstallDir "$PROGRAMFILES64\ClearNAI"
-; Installs to C:\Program Files\ClearNAI (one admin prompt). Managed PCs often block programs and DLLs under
+OutFile "..\target\release\ClearSpeak-Setup.exe"
+InstallDir "$PROGRAMFILES64\ClearSpeak"
+; Installs to C:\Program Files\ClearSpeak (one admin prompt). Managed PCs often block programs and DLLs under
 ; %LOCALAPPDATA% ("restrictions in effect on this computer"); Program Files is normally allowed. Settings, logs and
-; transcripts stay per-user in %LOCALAPPDATA%\ClearNAI (the app writes there; Program Files is read-only for users).
+; transcripts stay per-user in %LOCALAPPDATA%\ClearSpeak (the app writes there; Program Files is read-only for users).
 RequestExecutionLevel admin
 ; (shell folders default to the current user, which is what we want, so no SetShellVarContext is needed.)
 
 Function .onInit
   ${IfNot} ${RunningX64}
-    MessageBox MB_OK|MB_ICONSTOP "ClearNAI needs 64-bit Windows 10 or 11."
+    MessageBox MB_OK|MB_ICONSTOP "ClearSpeak needs 64-bit Windows 10 or 11."
     Abort
   ${EndIf}
   ${IfNot} ${AtLeastWin10}
-    MessageBox MB_OK|MB_ICONSTOP "ClearNAI needs Windows 10 or later."
+    MessageBox MB_OK|MB_ICONSTOP "ClearSpeak needs Windows 10 or later."
     Abort
   ${EndIf}
 FunctionEnd
@@ -95,18 +95,18 @@ Section "Install"
   ; Stop a running copy first (an update, or the old single-exe build), otherwise its files are locked.
   nsExec::Exec 'taskkill /F /IM ${ENGINE_EXE}'
   nsExec::Exec 'taskkill /F /IM ${APP_EXE}'
-  nsExec::Exec 'taskkill /F /IM clearnairt.exe'
+  nsExec::Exec 'taskkill /F /IM clearspeakrt.exe'
   Sleep 1000
-  Delete "$INSTDIR\clearnairt.exe"
-  ; Remove the old per-user install (%LOCALAPPDATA%\ClearNAI), keeping the user's settings.json and logs.
-  Delete "$LOCALAPPDATA\ClearNAI\clearnai.exe"
-  Delete "$LOCALAPPDATA\ClearNAI\clearnai-engine.exe"
-  Delete "$LOCALAPPDATA\ClearNAI\clearnairt.exe"
-  Delete "$LOCALAPPDATA\ClearNAI\Uninstall.exe"
-  Delete "$LOCALAPPDATA\ClearNAI\*.dll"
-  Delete "$LOCALAPPDATA\ClearNAI\*.tar.gz"
-  RMDir /r "$LOCALAPPDATA\ClearNAI\app_models"
-  RMDir /r "$LOCALAPPDATA\ClearNAI\asr_models"
+  Delete "$INSTDIR\clearspeakrt.exe"
+  ; Remove the old per-user install (%LOCALAPPDATA%\ClearSpeak), keeping the user's settings.json and logs.
+  Delete "$LOCALAPPDATA\ClearSpeak\clearspeak.exe"
+  Delete "$LOCALAPPDATA\ClearSpeak\clearspeak-engine.exe"
+  Delete "$LOCALAPPDATA\ClearSpeak\clearspeakrt.exe"
+  Delete "$LOCALAPPDATA\ClearSpeak\Uninstall.exe"
+  Delete "$LOCALAPPDATA\ClearSpeak\*.dll"
+  Delete "$LOCALAPPDATA\ClearSpeak\*.tar.gz"
+  RMDir /r "$LOCALAPPDATA\ClearSpeak\app_models"
+  RMDir /r "$LOCALAPPDATA\ClearSpeak\asr_models"
   DeleteRegKey HKCU "${UNINSTALL_REG_KEY}"
   File "..\target\release\${APP_EXE}"
   File "..\target\release\${ENGINE_EXE}"
@@ -121,7 +121,7 @@ Section "Install"
   File /nonfatal "vendor\vcruntime\*.dll"
 
   ; Accent-conversion model bundle (~270 MB), shipped as a folder next to the exe and installed into
-  ; %LOCALAPPDATA%\ClearNAI\app_models on first use (setup.rs compares full contents). Put the files in
+  ; %LOCALAPPDATA%\ClearSpeak\app_models on first use (setup.rs compares full contents). Put the files in
   ; app\assets\app_models\ before building the installer; /nonfatal = the installer still builds without
   ; them (Accent then reports "unavailable"). ecapa.onnx / librnnoise.dylib from the zip are not needed.
   SetOutPath "$INSTDIR\app_models"
@@ -135,7 +135,7 @@ Section "Install"
   File /nonfatal "assets\app_models\vocoder_causal_hifigan_best.onnx"
   SetOutPath "$INSTDIR"
 
-  ; Live-transcript speech model (~210 MB). The app looks for it in %LOCALAPPDATA%\ClearNAI\asr_models (this
+  ; Live-transcript speech model (~210 MB). The app looks for it in %LOCALAPPDATA%\ClearSpeak\asr_models (this
   ; folder). A reinstall removes the install folder, so without shipping it here the model vanished on every
   ; update ("speech model not found"). Put the two files in app\assets\asr_models\ before building the installer
   ; (fast_conformer_with_laughter_MatMul_qu8.ort and vocab.txt); /nonfatal = still builds without them.
@@ -158,7 +158,7 @@ Section "Install"
   ; Start with Windows: the engine writes its own per-user Run entry at first start and keeps it in line with the
   ; switch in Advanced. This installer is elevated, so it must not write HKCU itself.
 
-  ; Uninstall registry entry (HKLM, matches RequestExecutionLevel admin above) so ClearNAI shows up in Windows'
+  ; Uninstall registry entry (HKLM, matches RequestExecutionLevel admin above) so ClearSpeak shows up in Windows'
   ; "Apps & Features" / "Add or Remove Programs" with a working Uninstall
   ; button, the same as any normally-installed app.
   WriteRegStr HKLM "${UNINSTALL_REG_KEY}" "DisplayName" "${APP_NAME}"
@@ -173,10 +173,10 @@ Section "Install"
 SectionEnd
 
 Section "VB-CABLE Virtual Audio Driver"
-  ; Runs AFTER ClearNAI's own per-user install above (Section "Install") -
-  ; "first ClearNAI, then the driver," per explicit instruction. This is a
+  ; Runs AFTER ClearSpeak's own per-user install above (Section "Install") -
+  ; "first ClearSpeak, then the driver," per explicit instruction. This is a
   ; THIRD-PARTY kernel-mode driver (VB-Audio Software's VB-CABLE), not part
-  ; of ClearNAI - see docs/VIRTUAL_DEVICES.md for why ClearNAI needs a
+  ; of ClearSpeak - see docs/VIRTUAL_DEVICES.md for why ClearSpeak needs a
   ; virtual cable at all. Bundled directly into this installer ONLY
   ; because this specific build is for personal, non-commercial use -
   ; VB-Audio's donationware terms do not grant blanket redistribution
@@ -185,7 +185,7 @@ Section "VB-CABLE Virtual Audio Driver"
   ; this installer.nsi for a build distributed to other people.
   ;
   ; Driver installation genuinely requires admin rights - unlike
-  ; ClearNAI's own per-user install (`RequestExecutionLevel user` above,
+  ; ClearSpeak's own per-user install (`RequestExecutionLevel user` above,
   ; deliberately unchanged), VB-CABLE's own installer requests its own
   ; elevation when launched, so Windows shows a UAC prompt for just this
   ; one step rather than requiring this whole installer to run elevated.
@@ -217,8 +217,8 @@ Section "VB-CABLE Virtual Audio Driver"
     Goto skip_vbcable
   ${EndIf}
 
-  RMDir /r "$TEMP\ClearNAI-VBCABLE"
-  SetOutPath "$TEMP\ClearNAI-VBCABLE"
+  RMDir /r "$TEMP\ClearSpeak-VBCABLE"
+  SetOutPath "$TEMP\ClearSpeak-VBCABLE"
   File /nonfatal "${VBCABLE_DIR}\*.*"
 
   IfFileExists "${VBCABLE_EXE}" 0 skip_vbcable
@@ -229,12 +229,12 @@ Section "VB-CABLE Virtual Audio Driver"
     ExecShellWait "runas" "${VBCABLE_EXE}" "${VBCABLE_ARGS}" SW_SHOWNORMAL
     DetailPrint "VB-CABLE installer closed."
     SetOutPath "$TEMP"
-    RMDir /r "$TEMP\ClearNAI-VBCABLE"
+    RMDir /r "$TEMP\ClearSpeak-VBCABLE"
 
     ; VB-Audio's own documentation recommends a reboot for the driver to
     ; register reliably - ask, never force a silent unexpected reboot.
     MessageBox MB_YESNO|MB_ICONQUESTION \
-      "VB-CABLE setup has finished.$\r$\n$\r$\nA system restart is recommended before using the virtual cable with ClearNAI. Restart now?" \
+      "VB-CABLE setup has finished.$\r$\n$\r$\nA system restart is recommended before using the virtual cable with ClearSpeak. Restart now?" \
       IDNO skip_reboot
     Reboot
     skip_reboot:
@@ -253,10 +253,10 @@ Section "Uninstall"
   SetShellVarContext all
   nsExec::Exec 'taskkill /F /IM ${APP_EXE}'
   nsExec::Exec 'taskkill /F /IM ${ENGINE_EXE}'
-  nsExec::Exec 'taskkill /F /IM clearnairt.exe'
+  nsExec::Exec 'taskkill /F /IM clearspeakrt.exe'
   Sleep 1000
   ; $INSTDIR holds only the program files, libraries and models. The user's settings.json, logs and transcripts live
-  ; in %LOCALAPPDATA%\ClearNAI and are left in place.
+  ; in %LOCALAPPDATA%\ClearSpeak and are left in place.
   ;
   ; Deliberately does NOT touch any VB-Audio Virtual Cable / VoiceMeeter
   ; driver install - those are separate third-party products the user

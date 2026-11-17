@@ -25,7 +25,7 @@ Abstract:
 #include "IHVPrivatePropertySet.h"
 
 #include "simple.h"
-#include "clearnaipipe.h"
+#include "clearspeakpipe.h"
 #include "minipairs.h"
 #ifdef SYSVAD_BTH_BYPASS
 #include "bthhfpminipairs.h"
@@ -328,7 +328,7 @@ Environment:
     DPF(D_TERSE, ("[DriverUnload]"));
 
     ReleaseRegistryStringBuffer();
-    ClearNaiPipe_Cleanup();
+    ClearSpeakPipe_Cleanup();
 
     if (DriverObject == NULL)
     {
@@ -586,12 +586,12 @@ Return Value:
     DriverObject->MajorFunction[IRP_MJ_PNP] = PnpHandler;
 
     //
-    // ClearNAI: engine -> driver audio pipe (control device + dispatch hook).
+    // ClearSpeak: engine -> driver audio pipe (control device + dispatch hook).
     //
-    ntStatus = ClearNaiPipe_Init(DriverObject);
+    ntStatus = ClearSpeakPipe_Init(DriverObject);
     IF_FAILED_ACTION_JUMP(
         ntStatus,
-        DPF(D_ERROR, ("ClearNaiPipe_Init failed, 0x%x", ntStatus)),
+        DPF(D_ERROR, ("ClearSpeakPipe_Init failed, 0x%x", ntStatus)),
         Done);
 
     //

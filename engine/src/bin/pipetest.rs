@@ -1,6 +1,6 @@
 //! End-to-end driver check, no real microphone needed.
 //!
-//! Sends a 440 Hz tone through `\\.\ClearNAIPipe` and records the "ClearNAI"
+//! Sends a 440 Hz tone through `\\.\ClearSpeakPipe` and records the "ClearSpeak"
 //! capture endpoint through WASAPI at the same time. PASS when the recording
 //! is loud enough and its energy is mostly at 440 Hz, i.e. the tone made it
 //! engine -> driver -> Windows audio stack -> an app.
@@ -88,8 +88,8 @@ fn main() -> anyhow::Result<()> {
 
     // Recorder: the capture endpoint exposed by the driver.
     let (producer, mut consumer) = make_ring_buffer(2.0);
-    let _capture = MicCapture::start_by_name("ClearNAI", producer, Arc::new(FrameCounters::default()))?;
-    eprintln!("recording 'ClearNAI' capture endpoint for {seconds}s (no_write={no_write}, gap={gap}, rt={rt})...");
+    let _capture = MicCapture::start_by_name("ClearSpeak", producer, Arc::new(FrameCounters::default()))?;
+    eprintln!("recording 'ClearSpeak' capture endpoint for {seconds}s (no_write={no_write}, gap={gap}, rt={rt})...");
 
     let mut rec: Vec<f32> = Vec::new();
     let t0 = Instant::now();

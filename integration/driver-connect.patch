@@ -8,7 +8,7 @@
 -        Some(id) => MicCapture::start_on_device_id(id, mic_in_p, handles.counters.clone())
 -            .context("starting mic capture on the selected physical microphone device")?,
 -        None => MicCapture::start_default(mic_in_p, handles.counters.clone()).context("starting default mic capture")?,
-+    // Hidden test microphone (CLEARNAI_TEST_MIC, see test_input.rs): for machines with no microphone, e.g. the test VM.
++    // Hidden test microphone (CLEARSPEAK_TEST_MIC, see test_input.rs): for machines with no microphone, e.g. the test VM.
 +    let mic_capture = match crate::test_input::from_env() {
 +        Some(source) => {
 +            crate::test_input::start(source, mic_in_p);
@@ -26,8 +26,8 @@
          }
      };
  
-+    // ClearNAI virtual microphone driver (separate project, see driver_pipe.rs): forwards the final frame to the
-+    // driver so apps can pick "ClearNAI Microphone". No driver installed just means the frames are dropped.
++    // ClearSpeak virtual microphone driver (separate project, see driver_pipe.rs): forwards the final frame to the
++    // driver so apps can pick "ClearSpeak Microphone". No driver installed just means the frames are dropped.
 +    let driver_pipe = Some(crate::driver_pipe::DriverSink::start());
 +
      // Echo reference: the speaker pipeline copies every frame it plays into this ring, and the mic pipeline's
@@ -62,7 +62,7 @@
                  if let Some(writer) = driver_writer.as_ref() {
                      writer.push_frame(&frame);
                  }
-+                // Same frame to the ClearNAI driver's microphone (queued; a sender thread does the system call).
++                // Same frame to the ClearSpeak driver's microphone (queued; a sender thread does the system call).
 +                if let Some(pipe) = driver_pipe.as_mut() {
 +                    pipe.push_frame(&frame);
 +                }
@@ -99,11 +99,11 @@
    skip_vbcable:
  SectionEnd
  
-+; ClearNAI virtual microphone driver (separate project: ClearnaiWindows-Diver). TEST-SIGNED, so this installer only COPIES
++; ClearSpeak virtual microphone driver (separate project: ClearnaiWindows-Diver). TEST-SIGNED, so this installer only COPIES
 +; the package and its helper scripts to "$INSTDIR\driver"; it never installs the driver, trusts the test certificate or changes
-+; any Windows security setting. To use it, run Install-ClearNAI-Driver.ps1 from an elevated PowerShell on a test PC (see
++; any Windows security setting. To use it, run Install-ClearSpeak-Driver.ps1 from an elevated PowerShell on a test PC (see
 +; driver\README.txt). `/nonfatal`: the folder is not part of this repo, so a build without it (CI) still succeeds.
-+Section "ClearNAI driver package (copied, not installed)"
++Section "ClearSpeak driver package (copied, not installed)"
 +  SetOutPath "$INSTDIR\driver"
 +  File /nonfatal "..\..\ClearnaiWindows-Diver\dist\driver\*.*"
 +SectionEnd

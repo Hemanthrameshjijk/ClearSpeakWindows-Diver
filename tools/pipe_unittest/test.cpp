@@ -1,7 +1,7 @@
-// Unit tests for the driver's pipe logic (clearnaipipe.cpp compiled as a normal program against tools/pipe_unittest/shim).
+// Unit tests for the driver's pipe logic (clearspeakpipe.cpp compiled as a normal program against tools/pipe_unittest/shim).
 // Covers what the VM tone tests can't: every sample rate / bit depth / channel count, underrun, engine timeout,
 // latency clamp, ring wrap-around, IOCTL validation, dispatch isolation and cleanup.
-#include "../../driver/ClearNAI/sysvad/EndpointsCommon/clearnaipipe.cpp"
+#include "../../driver/ClearSpeak/sysvad/EndpointsCommon/clearspeakpipe.cpp"
 #include <cstdio>
 #include <vector>
 #include <algorithm>
@@ -25,7 +25,7 @@ static NTSTATUS Ioctl(PDEVICE_OBJECT dev, ULONG code, const void* data, ULONG by
     irp.Stack.Parameters.DeviceIoControl.IoControlCode = code;
     irp.Stack.Parameters.DeviceIoControl.InputBufferLength = bytes;
     irp.AssociatedIrp.SystemBuffer = const_cast<void*>(data);
-    return ClearNaiDispatch(dev, &irp);
+    return ClearSpeakDispatch(dev, &irp);
 }
 static NTSTATUS IoctlOut(PDEVICE_OBJECT dev, ULONG code, void* out, ULONG outBytes, ULONG_PTR* info = nullptr) {
     IRP irp = {};
@@ -33,7 +33,7 @@ static NTSTATUS IoctlOut(PDEVICE_OBJECT dev, ULONG code, void* out, ULONG outByt
     irp.Stack.Parameters.DeviceIoControl.IoControlCode = code;
     irp.Stack.Parameters.DeviceIoControl.OutputBufferLength = outBytes;
     irp.AssociatedIrp.SystemBuffer = out;
-    NTSTATUS st = ClearNaiDispatch(dev, &irp);
+    NTSTATUS st = ClearSpeakDispatch(dev, &irp);
     if (info) *info = irp.IoStatus.Information;
     return st;
 }
@@ -41,8 +41,8 @@ static void WriteRamp(ULONGLONG from, ULONG n) {   // sample value == absolute i
     std::vector<SHORT> v(n);
     for (ULONG i = 0; i < n; i++) v[i] = (SHORT)((from + i) & 0x7FFF);
     while (n) {
-        ULONG chunk = n > CLEARNAI_PIPE_MAX_WRITE / 2 ? CLEARNAI_PIPE_MAX_WRITE / 2 : n;
-        NTSTATUS st = Ioctl(g_ControlDevice, IOCTL_CLEARNAI_WRITE, v.data() + (v.size() - n), chunk * 2);
+        ULONG chunk = n > CLEARSPEAK_PIPE_MAX_WRITE / 2 ? CLEARSPEAK_PIPE_MAX_WRITE / 2 : n;
+        NTSTATUS st = Ioctl(g_ControlDevice, IOCTL_CLEARSPEAK_WRITE, v.data() + (v.size() - n), chunk * 2);
         CHECK(st == STATUS_SUCCESS, "write failed 0x%lx", (unsigned long)st);
         n -= chunk;
     }
@@ -58,62 +58,62 @@ int main() {
 
     // ---- init failure paths
     g_FailAlloc = true;
-    CHECK(ClearNaiPipe_Init(&g_drv) == STATUS_INSUFFICIENT_RESOURCES, "alloc failure not reported");
+    CHECK(ClearSpeakPipe_Init(&g_drv) == STATUS_INSUFFICIENT_RESOURCES, "alloc failure not reported");
     g_FailAlloc = false;
     CHECK(g_drv.MajorFunction[IRP_MJ_CREATE] == Forwarded, "dispatch table touched after failed init");
 
     // ---- init
-    CHECK(ClearNaiPipe_Init(&g_drv) == STATUS_SUCCESS, "init");
+    CHECK(ClearSpeakPipe_Init(&g_drv) == STATUS_SUCCESS, "init");
     CHECK(g_ControlDevice && !(g_ControlDevice->Flags & DO_DEVICE_INITIALIZING), "device still initializing");
     CHECK(g_ControlDevice->Flags & DO_BUFFERED_IO, "buffered io flag");
     CHECK(g_drv.MajorFunction[IRP_MJ_PNP] == Forwarded && g_drv.MajorFunction[IRP_MJ_POWER] == Forwarded &&
           g_drv.MajorFunction[IRP_MJ_SYSTEM_CONTROL] == Forwarded, "PnP/Power/WMI must be left to PortCls");
     for (int i = 0; i <= IRP_MJ_MAXIMUM_FUNCTION; i++) {
         if (i == IRP_MJ_PNP || i == IRP_MJ_POWER || i == IRP_MJ_SYSTEM_CONTROL) continue;
-        CHECK(g_drv.MajorFunction[i] == ClearNaiDispatch, "major %d not hooked", i);
+        CHECK(g_drv.MajorFunction[i] == ClearSpeakDispatch, "major %d not hooked", i);
     }
 
     // ---- dispatch isolation
     {
         IRP irp = {}; irp.Stack.MajorFunction = IRP_MJ_READ;
-        CHECK(ClearNaiDispatch(g_foreign, &irp) == 0x1234 && g_forwardedMajor == IRP_MJ_READ, "foreign device IRP not forwarded");
+        CHECK(ClearSpeakDispatch(g_foreign, &irp) == 0x1234 && g_forwardedMajor == IRP_MJ_READ, "foreign device IRP not forwarded");
         irp.Stack.MajorFunction = IRP_MJ_CREATE;
-        CHECK(ClearNaiDispatch(g_ControlDevice, &irp) == STATUS_SUCCESS, "create on control device");
+        CHECK(ClearSpeakDispatch(g_ControlDevice, &irp) == STATUS_SUCCESS, "create on control device");
         irp.Stack.MajorFunction = IRP_MJ_CLEANUP;
-        CHECK(ClearNaiDispatch(g_ControlDevice, &irp) == STATUS_SUCCESS, "cleanup on control device");
+        CHECK(ClearSpeakDispatch(g_ControlDevice, &irp) == STATUS_SUCCESS, "cleanup on control device");
         irp.Stack.MajorFunction = IRP_MJ_CLOSE;
-        CHECK(ClearNaiDispatch(g_ControlDevice, &irp) == STATUS_SUCCESS, "close on control device");
+        CHECK(ClearSpeakDispatch(g_ControlDevice, &irp) == STATUS_SUCCESS, "close on control device");
         g_forwardedMajor = -1;
         irp.Stack.MajorFunction = IRP_MJ_READ;
-        CHECK(ClearNaiDispatch(g_ControlDevice, &irp) == STATUS_INVALID_DEVICE_REQUEST && g_forwardedMajor == -1,
+        CHECK(ClearSpeakDispatch(g_ControlDevice, &irp) == STATUS_INVALID_DEVICE_REQUEST && g_forwardedMajor == -1,
               "stray READ on control device must not reach PortCls");
         irp.Stack.MajorFunction = IRP_MJ_WRITE;
-        CHECK(ClearNaiDispatch(g_ControlDevice, &irp) == STATUS_INVALID_DEVICE_REQUEST && g_forwardedMajor == -1, "stray WRITE");
+        CHECK(ClearSpeakDispatch(g_ControlDevice, &irp) == STATUS_INVALID_DEVICE_REQUEST && g_forwardedMajor == -1, "stray WRITE");
     }
 
     // ---- IOCTL validation
     {
-        SHORT buf[CLEARNAI_PIPE_MAX_WRITE / 2 + 8] = {};
+        SHORT buf[CLEARSPEAK_PIPE_MAX_WRITE / 2 + 8] = {};
         ULONGLONG before = g_WritePos;
-        CHECK(Ioctl(g_ControlDevice, IOCTL_CLEARNAI_WRITE, buf, 0) == STATUS_INVALID_PARAMETER, "zero length");
-        CHECK(Ioctl(g_ControlDevice, IOCTL_CLEARNAI_WRITE, buf, 3) == STATUS_INVALID_PARAMETER, "odd length");
-        CHECK(Ioctl(g_ControlDevice, IOCTL_CLEARNAI_WRITE, buf, CLEARNAI_PIPE_MAX_WRITE + 2) == STATUS_INVALID_PARAMETER, "oversize");
-        CHECK(Ioctl(g_ControlDevice, IOCTL_CLEARNAI_WRITE, nullptr, 8) == STATUS_INVALID_PARAMETER, "null buffer");
+        CHECK(Ioctl(g_ControlDevice, IOCTL_CLEARSPEAK_WRITE, buf, 0) == STATUS_INVALID_PARAMETER, "zero length");
+        CHECK(Ioctl(g_ControlDevice, IOCTL_CLEARSPEAK_WRITE, buf, 3) == STATUS_INVALID_PARAMETER, "odd length");
+        CHECK(Ioctl(g_ControlDevice, IOCTL_CLEARSPEAK_WRITE, buf, CLEARSPEAK_PIPE_MAX_WRITE + 2) == STATUS_INVALID_PARAMETER, "oversize");
+        CHECK(Ioctl(g_ControlDevice, IOCTL_CLEARSPEAK_WRITE, nullptr, 8) == STATUS_INVALID_PARAMETER, "null buffer");
         CHECK(Ioctl(g_ControlDevice, 0x12345678, buf, 8) == STATUS_INVALID_DEVICE_REQUEST, "unknown ioctl");
-        CHECK(Ioctl(g_ControlDevice, IOCTL_CLEARNAI_WRITE, buf, CLEARNAI_PIPE_MAX_WRITE) == STATUS_SUCCESS, "max-size write accepted");
-        CHECK(g_WritePos == before + CLEARNAI_PIPE_MAX_WRITE / 2, "bad writes must not advance the ring");
+        CHECK(Ioctl(g_ControlDevice, IOCTL_CLEARSPEAK_WRITE, buf, CLEARSPEAK_PIPE_MAX_WRITE) == STATUS_SUCCESS, "max-size write accepted");
+        CHECK(g_WritePos == before + CLEARSPEAK_PIPE_MAX_WRITE / 2, "bad writes must not advance the ring");
     }
 
     // ---- silence when no engine has ever written (fresh cursor, stale clock)
     {
         g_WritePos = 0; g_LastWriteTime = 0;
-        CLEARNAI_PIPE_CURSOR c; ClearNaiPipe_ResetCursor(&c);
+        CLEARSPEAK_PIPE_CURSOR c; ClearSpeakPipe_ResetCursor(&c);
         UCHAR out[480 * 2] ; memset(out, 0xAB, sizeof(out));
-        ClearNaiPipe_ReadFrames(&c, out, 480, 1, 16, 48000);
+        ClearSpeakPipe_ReadFrames(&c, out, 480, 1, 16, 48000);
         bool allZero = true; for (UCHAR b : out) allZero &= (b == 0);
         CHECK(allZero && !c.Started, "no engine => silence");
         UCHAR o8[64]; memset(o8, 0, sizeof(o8));
-        ClearNaiPipe_ReadFrames(&c, o8, 64, 1, 8, 48000);
+        ClearSpeakPipe_ReadFrames(&c, o8, 64, 1, 8, 48000);
         bool all80 = true; for (UCHAR b : o8) all80 &= (b == 0x80);
         CHECK(all80, "8-bit silence must be 0x80");
     }
@@ -127,13 +127,13 @@ int main() {
         combos++;
         g_WritePos = 0; g_LastWriteTime = 0;
         WriteRamp(0, 12000);                      // ramp 0..11999, 250 ms at 48 kHz
-        CLEARNAI_PIPE_CURSOR c; ClearNaiPipe_ResetCursor(&c);
+        CLEARSPEAK_PIPE_CURSOR c; ClearSpeakPipe_ResetCursor(&c);
         // A reader starts PREFILL_SAMPLES behind the writer, so only that much source is available:
         // ask for the frames it covers at this rate (underrun is tested separately).
         ULONG frames = (ULONG)((ULONGLONG)PREFILL_SAMPLES * rate / 48000) - 2;
         ULONG bps = bits / 8;
         std::vector<UCHAR> out((size_t)frames * ch * bps);
-        ClearNaiPipe_ReadFrames(&c, out.data(), frames, ch, bits, rate);
+        ClearSpeakPipe_ReadFrames(&c, out.data(), frames, ch, bits, rate);
         CHECK(c.Started, "rate %d bits %d ch %d: cursor not started", rate, bits, ch);
         ULONGLONG start = (ULONGLONG)12000 - PREFILL_SAMPLES;
         // Source positions follow floor(k * 48000 / rate) from the starting sample; verify exactly via the same 16.16 step.
@@ -164,7 +164,7 @@ int main() {
     // ---- long-run rate accuracy: 10 s at 44.1 kHz must consume 480000 +/- 1 source samples
     {
         g_WritePos = 0; g_LastWriteTime = 0;
-        CLEARNAI_PIPE_CURSOR c; ClearNaiPipe_ResetCursor(&c);
+        CLEARSPEAK_PIPE_CURSOR c; ClearSpeakPipe_ResetCursor(&c);
         ULONGLONG consumed0 = 0; bool first = true; ULONGLONG total = 0;
         std::vector<UCHAR> out(441 * 2);
         for (int tick = 0; tick < 1000; tick++) {          // 1000 x 10 ms
@@ -172,7 +172,7 @@ int main() {
             Tick(10);
             g_LastWriteTime = g_FakeInterruptTime;
             ULONGLONG before = c.Pos;
-            ClearNaiPipe_ReadFrames(&c, out.data(), 441, 1, 16, 44100);
+            ClearSpeakPipe_ReadFrames(&c, out.data(), 441, 1, 16, 44100);
             if (first) { consumed0 = c.Pos; first = false; } else total += c.Pos - before;
         }
         (void)consumed0;
@@ -184,9 +184,9 @@ int main() {
     {
         g_WritePos = 0; g_LastWriteTime = g_FakeInterruptTime;
         WriteRamp(0, 2000);                                  // reader starts 960 behind => only 960 available
-        CLEARNAI_PIPE_CURSOR c; ClearNaiPipe_ResetCursor(&c);
+        CLEARSPEAK_PIPE_CURSOR c; ClearSpeakPipe_ResetCursor(&c);
         std::vector<UCHAR> out(2000 * 2, 0xCD);
-        ClearNaiPipe_ReadFrames(&c, out.data(), 2000, 1, 16, 48000);
+        ClearSpeakPipe_ReadFrames(&c, out.data(), 2000, 1, 16, 48000);
         CHECK(c.Pos == 2000, "underrun: cursor must stop at the write position, got %llu", (unsigned long long)c.Pos);
         bool tailZero = true; for (size_t i = PREFILL_SAMPLES * 2; i < out.size(); i++) tailZero &= (out[i] == 0);
         bool headReal = Sample16(&out[0]) == (SHORT)(2000 - PREFILL_SAMPLES);
@@ -194,11 +194,11 @@ int main() {
         // Rebuffer: a trickle smaller than the jitter margin must NOT be released (silence), and nothing may be skipped.
         WriteRamp(2000, 480);
         UCHAR o2[480 * 2]; memset(o2, 0x99, sizeof(o2));
-        ClearNaiPipe_ReadFrames(&c, o2, 480, 1, 16, 48000);
+        ClearSpeakPipe_ReadFrames(&c, o2, 480, 1, 16, 48000);
         bool silent = true; for (UCHAR b : o2) silent &= (b == 0);
         CHECK(silent && c.Pos == 2000, "rebuffering: backlog %llu < margin must stay silent (pos %llu)", (unsigned long long)(g_WritePos - c.Pos), (unsigned long long)c.Pos);
         WriteRamp(2480, PREFILL_SAMPLES);                      // margin restored
-        ClearNaiPipe_ReadFrames(&c, o2, 480, 1, 16, 48000);
+        ClearSpeakPipe_ReadFrames(&c, o2, 480, 1, 16, 48000);
         CHECK(Sample16(&o2[0]) == (SHORT)2000 && Sample16(&o2[479 * 2]) == (SHORT)2479, "resume exactly where it stopped, no samples skipped");
     }
 
@@ -208,7 +208,7 @@ int main() {
     // there is one clean gap and the 30 ms margin absorbs the 8 ms jitter afterwards.
     {
         g_WritePos = 0; g_LastWriteTime = g_FakeInterruptTime;
-        CLEARNAI_PIPE_CURSOR c; ClearNaiPipe_ResetCursor(&c);
+        CLEARSPEAK_PIPE_CURSOR c; ClearSpeakPipe_ResetCursor(&c);
         std::vector<SHORT> outAll; outAll.reserve(48 * 10000);
         ULONGLONG next = 0, dueFrames = 0;
         uint32_t rng = 12345;
@@ -221,14 +221,14 @@ int main() {
                 std::vector<SHORT> v(480 * dueFrames);
                 for (size_t i = 0; i < v.size(); i++) v[i] = (SHORT)(1 + (next++ % 30000));
                 for (size_t off = 0; off < v.size(); off += 4800)   // IOCTL limit is 100 ms
-                    Ioctl(g_ControlDevice, IOCTL_CLEARNAI_WRITE, v.data() + off, (ULONG)(std::min<size_t>(4800, v.size() - off) * 2));
+                    Ioctl(g_ControlDevice, IOCTL_CLEARSPEAK_WRITE, v.data() + off, (ULONG)(std::min<size_t>(4800, v.size() - off) * 2));
                 g_LastWriteTime = g_FakeInterruptTime;
                 dueFrames = 0;
                 rng = rng * 1664525u + 1013904223u;
                 nextWriteMs = ms + 8 + (int)((rng >> 16) % 9);       // next wake-up: 8..16 ms later
             }
             UCHAR o[48 * 2];
-            ClearNaiPipe_ReadFrames(&c, o, 48, 1, 16, 48000);
+            ClearSpeakPipe_ReadFrames(&c, o, 48, 1, 16, 48000);
             for (int i = 0; i < 48; i++) outAll.push_back(Sample16(&o[i * 2]));
         }
         int runs = 0; size_t silentTotal = 0, run = 0;
@@ -246,22 +246,22 @@ int main() {
     {
         g_WritePos = 0; g_LastWriteTime = g_FakeInterruptTime;
         WriteRamp(0, 4800);
-        CLEARNAI_PIPE_CURSOR c; ClearNaiPipe_ResetCursor(&c);
+        CLEARSPEAK_PIPE_CURSOR c; ClearSpeakPipe_ResetCursor(&c);
         UCHAR o[480 * 2];
-        ClearNaiPipe_ReadFrames(&c, o, 480, 1, 16, 48000);
+        ClearSpeakPipe_ReadFrames(&c, o, 480, 1, 16, 48000);
         CHECK(c.Started && Sample16(&o[0]) != 0, "live before timeout");
         Tick(249);
-        ClearNaiPipe_ReadFrames(&c, o, 480, 1, 16, 48000);
+        ClearSpeakPipe_ReadFrames(&c, o, 480, 1, 16, 48000);
         CHECK(Sample16(&o[0]) != 0 || Sample16(&o[2]) != 0, "still live at 249 ms");
         Tick(2);
         memset(o, 0xEE, sizeof(o));
-        ClearNaiPipe_ReadFrames(&c, o, 480, 1, 16, 48000);
+        ClearSpeakPipe_ReadFrames(&c, o, 480, 1, 16, 48000);
         bool z = true; for (UCHAR b : o) z &= (b == 0);
         CHECK(z && !c.Started, "silence after 250 ms without writes");
         // engine returns: reader re-syncs close to the writer, not 250 ms of stale audio
         WriteRamp(g_WritePos, 4800);
         g_LastWriteTime = g_FakeInterruptTime;
-        ClearNaiPipe_ReadFrames(&c, o, 480, 1, 16, 48000);
+        ClearSpeakPipe_ReadFrames(&c, o, 480, 1, 16, 48000);
         CHECK(c.Started && c.Pos == g_WritePos - PREFILL_SAMPLES + 480, "re-sync after engine returns (pos %llu, write %llu)",
               (unsigned long long)c.Pos, (unsigned long long)g_WritePos);
     }
@@ -270,26 +270,26 @@ int main() {
     {
         g_WritePos = 0; g_LastWriteTime = g_FakeInterruptTime;
         WriteRamp(0, 4800);
-        CLEARNAI_PIPE_CURSOR c; ClearNaiPipe_ResetCursor(&c);
+        CLEARSPEAK_PIPE_CURSOR c; ClearSpeakPipe_ResetCursor(&c);
         UCHAR o[480 * 2];
-        ClearNaiPipe_ReadFrames(&c, o, 480, 1, 16, 48000);
+        ClearSpeakPipe_ReadFrames(&c, o, 480, 1, 16, 48000);
         WriteRamp(g_WritePos, 20000);                          // reader now > 100 ms behind
         g_LastWriteTime = g_FakeInterruptTime;
         ULONGLONG w = g_WritePos;
-        ClearNaiPipe_ReadFrames(&c, o, 480, 1, 16, 48000);
+        ClearSpeakPipe_ReadFrames(&c, o, 480, 1, 16, 48000);
         CHECK(Sample16(&o[0]) == (SHORT)((w - PREFILL_SAMPLES) & 0x7FFF), "latency clamp jump target");
     }
 
     // ---- ring wrap-around (write > 48000 samples in total, reader straddles the boundary)
     {
         g_WritePos = 0; g_LastWriteTime = g_FakeInterruptTime;
-        CLEARNAI_PIPE_CURSOR c; ClearNaiPipe_ResetCursor(&c);
+        CLEARSPEAK_PIPE_CURSOR c; ClearSpeakPipe_ResetCursor(&c);
         bool ok = true; ULONGLONG lastFirst = 0;
         std::vector<UCHAR> o(480 * 2);
         for (int tick = 0; tick < 400; tick++) {               // 4 s of audio, ring is 1 s
             WriteRamp(g_WritePos, 480);
             g_LastWriteTime = g_FakeInterruptTime;
-            ClearNaiPipe_ReadFrames(&c, o.data(), 480, 1, 16, 48000);
+            ClearSpeakPipe_ReadFrames(&c, o.data(), 480, 1, 16, 48000);
             if (tick > 5) {
                 for (int i = 1; i < 480; i++) {
                     SHORT prev = Sample16(&o[(i - 1) * 2]), cur = Sample16(&o[i * 2]);
@@ -306,38 +306,38 @@ int main() {
     {
         g_WritePos = 0; g_LastWriteTime = g_FakeInterruptTime;
         WriteRamp(0, 4800);
-        CLEARNAI_PIPE_CURSOR c; ClearNaiPipe_ResetCursor(&c);
+        CLEARSPEAK_PIPE_CURSOR c; ClearSpeakPipe_ResetCursor(&c);
         UCHAR o[64]; memset(o, 0x55, sizeof(o));
-        ClearNaiPipe_ReadFrames(&c, o, 16, 1, 12, 48000);      // 12-bit: unsupported
+        ClearSpeakPipe_ReadFrames(&c, o, 16, 1, 12, 48000);      // 12-bit: unsupported
         bool z = true; for (UCHAR b : o) z &= (b == 0x55 || b == 0);
         CHECK(!c.Started, "unsupported bit depth must not start the cursor");
-        ClearNaiPipe_ReadFrames(&c, o, 16, 0, 16, 48000);      // zero channels
-        ClearNaiPipe_ReadFrames(&c, o, 16, 1, 16, 0);          // zero rate
+        ClearSpeakPipe_ReadFrames(&c, o, 16, 0, 16, 48000);      // zero channels
+        ClearSpeakPipe_ReadFrames(&c, o, 16, 1, 16, 0);          // zero rate
         CHECK(!c.Started, "zero channel/rate must not start the cursor");
-        ClearNaiPipe_ReadFrames(&c, o, 0, 1, 16, 48000);       // zero frames
+        ClearSpeakPipe_ReadFrames(&c, o, 0, 1, 16, 48000);       // zero frames
         (void)z;
     }
 
     // ---- diagnostics counters
     {
-        CLEARNAI_PIPE_STATS before = {}, after = {}; ULONG_PTR info = 0;
-        CHECK(IoctlOut(g_ControlDevice, IOCTL_CLEARNAI_STATS, &before, sizeof(before) - 1) == STATUS_BUFFER_TOO_SMALL, "stats: short buffer");
-        CHECK(IoctlOut(g_ControlDevice, IOCTL_CLEARNAI_STATS, nullptr, sizeof(before)) == STATUS_BUFFER_TOO_SMALL, "stats: null buffer");
-        CHECK(IoctlOut(g_ControlDevice, IOCTL_CLEARNAI_STATS, &before, sizeof(before), &info) == STATUS_SUCCESS && info == sizeof(before), "stats: ok");
+        CLEARSPEAK_PIPE_STATS before = {}, after = {}; ULONG_PTR info = 0;
+        CHECK(IoctlOut(g_ControlDevice, IOCTL_CLEARSPEAK_STATS, &before, sizeof(before) - 1) == STATUS_BUFFER_TOO_SMALL, "stats: short buffer");
+        CHECK(IoctlOut(g_ControlDevice, IOCTL_CLEARSPEAK_STATS, nullptr, sizeof(before)) == STATUS_BUFFER_TOO_SMALL, "stats: null buffer");
+        CHECK(IoctlOut(g_ControlDevice, IOCTL_CLEARSPEAK_STATS, &before, sizeof(before), &info) == STATUS_SUCCESS && info == sizeof(before), "stats: ok");
         // scripted scenario: 2 writes, 1 sync, 1 underrun, 1 jump, 1 timeout
         g_WritePos = 0; g_LastWriteTime = g_FakeInterruptTime;
         WriteRamp(0, 2400);
         Tick(40);
         WriteRamp(g_WritePos, 480);                       // 40 ms gap before this write
-        CLEARNAI_PIPE_CURSOR c; ClearNaiPipe_ResetCursor(&c);
+        CLEARSPEAK_PIPE_CURSOR c; ClearSpeakPipe_ResetCursor(&c);
         std::vector<UCHAR> out(8000 * 2);
-        ClearNaiPipe_ReadFrames(&c, out.data(), 8000, 1, 16, 48000);   // drains the ring => underrun
+        ClearSpeakPipe_ReadFrames(&c, out.data(), 8000, 1, 16, 48000);   // drains the ring => underrun
         WriteRamp(g_WritePos, 20000);                     // reader far behind (or rebuffering) => re-sync
-        ClearNaiPipe_ReadFrames(&c, out.data(), 480, 1, 16, 48000);
-        ClearNaiPipe_ReadFrames(&c, out.data(), 480, 1, 16, 48000);
+        ClearSpeakPipe_ReadFrames(&c, out.data(), 480, 1, 16, 48000);
+        ClearSpeakPipe_ReadFrames(&c, out.data(), 480, 1, 16, 48000);
         Tick(300);
-        ClearNaiPipe_ReadFrames(&c, out.data(), 480, 1, 16, 48000);    // engine silent => timeout
-        CHECK(IoctlOut(g_ControlDevice, IOCTL_CLEARNAI_STATS, &after, sizeof(after)) == STATUS_SUCCESS, "stats: read after");
+        ClearSpeakPipe_ReadFrames(&c, out.data(), 480, 1, 16, 48000);    // engine silent => timeout
+        CHECK(IoctlOut(g_ControlDevice, IOCTL_CLEARSPEAK_STATS, &after, sizeof(after)) == STATUS_SUCCESS, "stats: read after");
         CHECK(after.Underruns == before.Underruns + 1, "stats: underruns %llu", (unsigned long long)(after.Underruns - before.Underruns));
         CHECK(after.Timeouts == before.Timeouts + 1, "stats: timeouts %llu", (unsigned long long)(after.Timeouts - before.Timeouts));
         CHECK(after.Syncs >= before.Syncs + 1, "stats: syncs");
@@ -352,15 +352,15 @@ int main() {
     {
         int d = g_DeviceDeleted, l = g_LinkDeleted;
         g_LastWriteTime = g_FakeInterruptTime;
-        ClearNaiPipe_Cleanup();
+        ClearSpeakPipe_Cleanup();
         CHECK(g_DeviceDeleted == d + 1 && g_LinkDeleted == l + 1, "cleanup must delete device and link");
         CHECK(g_Ring == nullptr && g_ControlDevice == nullptr, "cleanup must free ring and clear device");
-        CLEARNAI_PIPE_CURSOR c; ClearNaiPipe_ResetCursor(&c);
+        CLEARSPEAK_PIPE_CURSOR c; ClearSpeakPipe_ResetCursor(&c);
         UCHAR o[64]; memset(o, 0x77, sizeof(o));
-        ClearNaiPipe_ReadFrames(&c, o, 32, 1, 16, 48000);      // late reader after unload: silence, no crash
+        ClearSpeakPipe_ReadFrames(&c, o, 32, 1, 16, 48000);      // late reader after unload: silence, no crash
         bool z = true; for (UCHAR b : o) z &= (b == 0);
         CHECK(z, "reader after cleanup gets silence");
-        ClearNaiPipe_Cleanup();                                // idempotent
+        ClearSpeakPipe_Cleanup();                                // idempotent
     }
 
     printf("%d checks, %d failed\n", g_checks, g_failed);

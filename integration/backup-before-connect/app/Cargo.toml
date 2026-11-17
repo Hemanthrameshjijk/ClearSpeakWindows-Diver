@@ -1,23 +1,23 @@
 [package]
-name = "clearnai-app"
+name = "clearspeak-app"
 version.workspace = true
 edition.workspace = true
 
 # Two programs, like a noise-cancelling app with a background service:
-#   clearnai-engine.exe - audio, tray icon, hotkey, settings; no window; starts with Windows
-#   clearnai.exe        - the window; closing it never stops the audio
+#   clearspeak-engine.exe - audio, tray icon, hotkey, settings; no window; starts with Windows
+#   clearspeak.exe        - the window; closing it never stops the audio
 # Both are thin wrappers over this package's library (src/lib.rs).
 [lib]
-name = "clearnai_app"
+name = "clearspeak_app"
 path = "src/lib.rs"
 
 [[bin]]
-name = "clearnai"
-path = "src/bin/clearnai.rs"
+name = "clearspeak"
+path = "src/bin/clearspeak.rs"
 
 [[bin]]
-name = "clearnai-engine"
-path = "src/bin/clearnai-engine.rs"
+name = "clearspeak-engine"
+path = "src/bin/clearspeak-engine.rs"
 
 [dependencies]
 # Portable foundation crate (bypass toggles, ring buffers, metrics). Builds
@@ -39,7 +39,7 @@ bvc-hush = { path = "../crates/bvc-hush" }
 # code that is itself `#[cfg(windows)]`-gated (see src/engine.rs).
 audio-io = { path = "../crates/audio-io" }
 
-# User-mode side of the future ClearNAI virtual audio driver's transport -
+# User-mode side of the future ClearSpeak virtual audio driver's transport -
 # see `docs/DRIVER_PLAN.md`. Only the mic pipeline writes into it today;
 # nothing reads from it yet (no driver exists) - this is deliberately built
 # and wired ahead of the driver itself, so that half of the boundary is
@@ -70,7 +70,7 @@ iced = { version = "0.14", features = ["tokio", "svg", "image"] }
 # been removed - both `weya_nc.dll` and the ONNX model bundle are now
 # embedded directly into this binary via `include_bytes!` (see
 # `app/assets/` and `setup.rs::ensure_bvc_assets_extracted`) and
-# self-extracted into `%LOCALAPPDATA%\ClearNAI` at launch, with no network
+# self-extracted into `%LOCALAPPDATA%\ClearSpeak` at launch, with no network
 # access involved at all.
 
 [target.'cfg(windows)'.dependencies]
@@ -84,6 +84,6 @@ wasapi = "0.24"
 # System-tray icon for the "Minimize to tray" setting (see `src/tray.rs`). Exact pin: published 2026-10-07.
 tray-icon = { version = "=0.26.1", default-features = false }
 
-# Embeds assets/clearnai.ico into clearnairt.exe (Windows only; see build.rs).
+# Embeds assets/clearspeak.ico into clearspeakrt.exe (Windows only; see build.rs).
 [build-dependencies]
 winresource = "=0.1.31"

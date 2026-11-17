@@ -1,5 +1,5 @@
-//! Client for the driver's control device `\\.\ClearNAIPipe` (see
-//! `driver/ClearNAI/sysvad/EndpointsCommon/clearnaipipe.h` for the contract).
+//! Client for the driver's control device `\\.\ClearSpeakPipe` (see
+//! `driver/ClearSpeak/sysvad/EndpointsCommon/clearspeakpipe.h` for the contract).
 
 use std::time::{Duration, Instant};
 
@@ -10,13 +10,13 @@ use windows::Win32::Storage::FileSystem::{
 };
 use windows::Win32::System::IO::DeviceIoControl;
 
-/// CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_WRITE_DATA); must match clearnaipipe.h.
-const IOCTL_CLEARNAI_WRITE: u32 = (0x22 << 16) | (2 << 14) | (0x800 << 2);
+/// CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_WRITE_DATA); must match clearspeakpipe.h.
+const IOCTL_CLEARSPEAK_WRITE: u32 = (0x22 << 16) | (2 << 14) | (0x800 << 2);
 
-/// CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_ANY_ACCESS); must match clearnaipipe.h.
-const IOCTL_CLEARNAI_STATS: u32 = (0x22 << 16) | (0x801 << 2);
+/// CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_ANY_ACCESS); must match clearspeakpipe.h.
+const IOCTL_CLEARSPEAK_STATS: u32 = (0x22 << 16) | (0x801 << 2);
 
-/// Mirror of CLEARNAI_PIPE_STATS in clearnaipipe.h (ten u64 counters).
+/// Mirror of CLEARSPEAK_PIPE_STATS in clearspeakpipe.h (ten u64 counters).
 #[repr(C)]
 #[derive(Clone, Copy, Default, Debug)]
 pub struct PipeStats {
@@ -55,7 +55,7 @@ impl DriverPipe {
         self.last_try = Instant::now();
         let h = unsafe {
             CreateFileW(
-                w!("\\\\.\\ClearNAIPipe"),
+                w!("\\\\.\\ClearSpeakPipe"),
                 GENERIC_READ.0 | GENERIC_WRITE.0,
                 FILE_SHARE_READ | FILE_SHARE_WRITE,
                 None,
@@ -79,7 +79,7 @@ impl DriverPipe {
         let ok = unsafe {
             DeviceIoControl(
                 h,
-                IOCTL_CLEARNAI_STATS,
+                IOCTL_CLEARSPEAK_STATS,
                 None,
                 0,
                 Some(&mut st as *mut PipeStats as *mut _),
@@ -102,7 +102,7 @@ impl DriverPipe {
         let ok = unsafe {
             DeviceIoControl(
                 h,
-                IOCTL_CLEARNAI_WRITE,
+                IOCTL_CLEARSPEAK_WRITE,
                 Some(pcm.as_ptr() as *const _),
                 (pcm.len() * 2) as u32,
                 None,

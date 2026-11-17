@@ -1,6 +1,6 @@
-//! ClearNAI engine, milestone 1: raw passthrough.
+//! ClearSpeak engine, milestone 1: raw passthrough.
 //!
-//! Real mic (WASAPI) -> driver pipe (`\\.\ClearNAIPipe`) -> "ClearNAI Microphone".
+//! Real mic (WASAPI) -> driver pipe (`\\.\ClearSpeakPipe`) -> "ClearSpeak Microphone".
 //! No DSP/ML yet: the point is to validate the whole pipe end to end. Noise
 //! suppression slots in between the ring pop and `DriverPipe::write`.
 
@@ -19,7 +19,7 @@ fn main() -> anyhow::Result<()> {
     let counters = Arc::new(FrameCounters::default());
     let _capture = MicCapture::start_default(producer, counters)?;
     let mut driver = pipe::DriverPipe::new();
-    eprintln!("clearnai-engine: passthrough running (Ctrl+C to stop)");
+    eprintln!("clearspeak-engine: passthrough running (Ctrl+C to stop)");
 
     let mut frame = vec![0.0f32; FRAME_SAMPLES];
     let mut was_connected = false;
@@ -31,7 +31,7 @@ fn main() -> anyhow::Result<()> {
             driver.write(&frame); // passthrough: no processing
             if driver.connected() != was_connected {
                 was_connected = driver.connected();
-                eprintln!("driver pipe {}", if was_connected { "connected" } else { "lost (is the ClearNAI driver installed?)" });
+                eprintln!("driver pipe {}", if was_connected { "connected" } else { "lost (is the ClearSpeak driver installed?)" });
             }
         } else {
             std::thread::sleep(Duration::from_millis(2));
@@ -41,5 +41,5 @@ fn main() -> anyhow::Result<()> {
 
 #[cfg(not(windows))]
 fn main() {
-    eprintln!("clearnai-engine only runs on Windows");
+    eprintln!("clearspeak-engine only runs on Windows");
 }

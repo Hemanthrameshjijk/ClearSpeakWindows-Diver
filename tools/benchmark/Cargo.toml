@@ -1,5 +1,5 @@
 [package]
-name = "clearnai-benchmark"
+name = "clearspeak-benchmark"
 version.workspace = true
 edition.workspace = true
 
