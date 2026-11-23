@@ -15,10 +15,16 @@
 //!               recording goes silent during the gap and the tone comes back afterwards
 //!   --speaker   the other direction: play a 440 Hz tone into "ClearSpeak Speaker" through WASAPI and read it back
 //!               with IOCTL_CLEARSPEAK_READ (what call apps play, as the engine sees it); same level / 440 Hz checks
+//!   --duplex    both directions at once: the 440 Hz mic test above plus a 1 kHz `--speaker` test on its own thread;
+//!               PASS only when both pass (e.g. `pipetest 120 --duplex` for a 2-minute duplex soak)
 
 #[cfg(windows)]
 #[path = "../pipe.rs"]
 mod pipe;
+
+/// Tone of the speaker direction in `--duplex` (different from the mic's 440 Hz, so crosstalk fails the checks).
+#[cfg(windows)]
+const DUPLEX_SPEAKER_HZ: f32 = 1000.0;
 
 #[cfg(windows)]
 fn main() -> anyhow::Result<()> {
@@ -48,6 +54,22 @@ fn main() -> anyhow::Result<()> {
         println!("{}", if pass { "PASS" } else { "FAIL" });
         std::process::exit(if pass { 0 } else { 1 });
     }
+
+    // `--duplex`: both directions at once, as the engine runs them with caller-side cleanup on. The caller direction
+    // (1 kHz into "ClearSpeak Speaker", read back) runs on its own thread next to the mic direction below (440 Hz),
+    // each with its own handle; different tones, so a leak between the two rings fails both tone checks.
+    let duplex = args.iter().any(|a| a == "--duplex").then(|| {
+        std::thread::spawn(move || {
+            let _ = wasapi::initialize_mta().ok();
+            match speaker_readback(seconds, DUPLEX_SPEAKER_HZ, false) {
+                Ok(pass) => pass,
+                Err(e) => {
+                    println!("speaker direction failed to start: {e:#}");
+                    false
+                }
+            }
+        })
+    });
 
     let mut stats_pipe = pipe::DriverPipe::new();
     let before = stats_pipe.stats();
@@ -129,7 +151,12 @@ fn main() -> anyhow::Result<()> {
     if args.iter().any(|a| a == "--trace") {
         print_windows(&rec);
     }
-    let pass = if level { analyse_level(&rec) } else if gap { analyse_gap(&rec, pipe_ok) } else { analyse_tone(&rec, pipe_ok, TONE_HZ) };
+    let mut pass = if level { analyse_level(&rec) } else if gap { analyse_gap(&rec, pipe_ok) } else { analyse_tone(&rec, pipe_ok, TONE_HZ) };
+    if let Some(speaker) = duplex {
+        let speaker_pass = speaker.join().unwrap_or(false);
+        println!("duplex: mic direction {}, speaker direction {}", if pass { "PASS" } else { "FAIL" }, if speaker_pass { "PASS" } else { "FAIL" });
+        pass &= speaker_pass;
+    }
     println!("{}", if pass { "PASS" } else { "FAIL" });
     std::process::exit(if pass { 0 } else { 1 });
 }
