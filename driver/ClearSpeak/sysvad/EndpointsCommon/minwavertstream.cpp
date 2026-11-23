@@ -35,6 +35,7 @@ Return Value:
 --*/
 {
     PAGED_CODE();
+    ClearSpeakPipe_SpeakerRelease(this);
     if (NULL != m_pMiniport)
     {
         if (m_pAudioModules)
@@ -228,6 +229,9 @@ Return Value:
     m_ullWritePosition = 0;
     m_ullDmaTimeStamp = 0;
     ClearSpeakPipe_ResetCursor(&m_PipeCursor);
+    ClearSpeakPipe_ResetSpeakerWriter(&m_SpkWriter);
+    m_bFeedsSpeakerRing = FALSE;
+    m_SpkSampleFormat = CLEARSPEAK_SPK_FMT_PCM;
     m_hnsElapsedTimeCarryForward = 0;
     m_ullLastDPCTimeStamp = 0;
     m_hnsDPCTimeCarryForward = 0;
@@ -315,6 +319,20 @@ Return Value:
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     RtlCopyMemory(m_pWfExt, pWfEx, sizeof(WAVEFORMATEX) + pWfEx->cbSize);
+
+    // ClearSpeak: render streams of the speaker endpoint (system and offload pins) feed the speaker ring
+    // that the engine reads with IOCTL_CLEARSPEAK_READ.
+    if (!m_bCapture && m_pMiniport->m_DeviceType == eSpeakerDevice)
+    {
+        m_bFeedsSpeakerRing = TRUE;
+        if (m_pWfExt->Format.wFormatTag == WAVE_FORMAT_IEEE_FLOAT ||
+            (m_pWfExt->Format.wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+             m_pWfExt->Format.cbSize >= sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX) &&
+             IsEqualGUIDAligned(m_pWfExt->SubFormat, KSDATAFORMAT_SUBTYPE_IEEE_FLOAT)))
+        {
+            m_SpkSampleFormat = CLEARSPEAK_SPK_FMT_FLOAT;
+        }
+    }
 
     m_pbMuted = (PBOOL)ExAllocatePool2(POOL_FLAG_NON_PAGED, m_pWfExt->Format.nChannels * sizeof(BOOL), MINWAVERTSTREAM_POOLTAG);
     if (m_pbMuted == NULL)
@@ -1345,6 +1363,7 @@ NTSTATUS CMiniportWaveRTStream::SetState
             ullPerfCounterTemp = KeQueryPerformanceCounter(&m_ullPerformanceCounterFrequency);
             m_ullLastDPCTimeStamp = m_ullDmaTimeStamp = KSCONVERT_PERFORMANCE_TIME(m_ullPerformanceCounterFrequency.QuadPart, ullPerfCounterTemp);
             ClearSpeakPipe_ResetCursor(&m_PipeCursor);
+            ClearSpeakPipe_ResetSpeakerWriter(&m_SpkWriter);
 
             if (m_ulNotificationIntervalMs > 0)
             {
@@ -1363,6 +1382,12 @@ NTSTATUS CMiniportWaveRTStream::SetState
             }
 
             break;
+    }
+
+    if (State_ != KSSTATE_RUN)
+    {
+        // ClearSpeak: a stream that stops playing lets another render stream feed the speaker ring.
+        ClearSpeakPipe_SpeakerRelease(this);
     }
 
     m_KsState = State_;
@@ -1471,11 +1496,8 @@ VOID CMiniportWaveRTStream::UpdatePosition
                                         0);
         }
 
-        if (!g_DoNotCreateDataFiles)
-        {
-            // Read from buffer and write to a file.
-            ReadBytes(ByteDisplacement);
-        }
+        // Copy to the speaker ring and/or the debug data file.
+        ReadBytes(ByteDisplacement);
     }
     
     // Increment the DMA position by the number of bytes displaced since the last
@@ -1550,7 +1572,8 @@ VOID CMiniportWaveRTStream::ReadBytes
 
 Routine Description:
 
-This function reads the audio buffer and saves the data in a file.
+This function reads the audio buffer: ClearSpeak copies it to the speaker ring, and
+it is saved in a file when data files are enabled.
 
 Arguments:
 
@@ -1558,6 +1581,8 @@ ByteDisplacement - # of bytes to process.
 
 --*/
 {
+    FeedSpeakerRing(ByteDisplacement);
+
     ULONG bufferOffset = m_ullLinearPosition % m_ulDmaBufferSize;
 
     // Normally this will loop no more than once for a single wrap, but if
@@ -1565,9 +1590,69 @@ ByteDisplacement - # of bytes to process.
     while (ByteDisplacement > 0)
     {
         ULONG runWrite = min(ByteDisplacement, m_ulDmaBufferSize - bufferOffset);
-        m_SaveData.WriteData(m_pDmaBuffer + bufferOffset, runWrite);
+        if (!g_DoNotCreateDataFiles)
+        {
+            m_SaveData.WriteData(m_pDmaBuffer + bufferOffset, runWrite);
+        }
         bufferOffset = (bufferOffset + runWrite) % m_ulDmaBufferSize;
         ByteDisplacement -= runWrite;
+    }
+}
+
+//=============================================================================
+#pragma code_seg()
+VOID CMiniportWaveRTStream::FeedSpeakerRing
+(
+    _In_ ULONG ByteDisplacement
+)
+/*++
+
+Routine Description:
+
+ClearSpeak: hands the frames the audio engine rendered (the ByteDisplacement bytes
+at the current play position) to the speaker ring as mono PCM16 48 kHz.
+
+--*/
+{
+    ULONG frameBytes = m_pWfExt->Format.nBlockAlign;
+    UCHAR frame[64];
+
+    if (!m_bFeedsSpeakerRing || frameBytes == 0 || frameBytes > sizeof(frame) || m_ulDmaBufferSize == 0 ||
+        m_pWfExt->Format.nChannels == 0 || frameBytes != (ULONG)m_pWfExt->Format.nChannels * (ULONG)(m_pWfExt->Format.wBitsPerSample / 8))
+    {
+        return;
+    }
+
+    ULONG bufferOffset = m_ullLinearPosition % m_ulDmaBufferSize;
+    ULONG frames = ByteDisplacement / frameBytes;
+
+    while (frames > 0)
+    {
+        ULONG contiguous = (m_ulDmaBufferSize - bufferOffset) / frameBytes;
+        ULONG n;
+        const UCHAR *src;
+
+        if (contiguous == 0)
+        {
+            // One frame straddles the end of the cyclic buffer: stitch it together.
+            ULONG head = m_ulDmaBufferSize - bufferOffset;
+            RtlCopyMemory(frame, m_pDmaBuffer + bufferOffset, head);
+            RtlCopyMemory(frame + head, m_pDmaBuffer, frameBytes - head);
+            src = frame;
+            n = 1;
+        }
+        else
+        {
+            src = m_pDmaBuffer + bufferOffset;
+            n = min(frames, contiguous);
+        }
+
+        ClearSpeakPipe_SpeakerWrite(this, &m_SpkWriter, src, n,
+                                    m_pWfExt->Format.nChannels, m_pWfExt->Format.wBitsPerSample,
+                                    m_SpkSampleFormat, m_pWfExt->Format.nSamplesPerSec);
+
+        bufferOffset = (ULONG)(((ULONGLONG)bufferOffset + (ULONGLONG)n * frameBytes) % m_ulDmaBufferSize);
+        frames -= n;
     }
 }
 

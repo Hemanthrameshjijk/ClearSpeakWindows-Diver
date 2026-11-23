@@ -13,6 +13,8 @@
 //!   --trace     also print a 100 ms-window strip chart and count off-level windows (finds dropouts)
 //!   --gap       the writer stops for 1.5 s mid-test (engine crash/restart); PASS when the
 //!               recording goes silent during the gap and the tone comes back afterwards
+//!   --speaker   the other direction: play a 440 Hz tone into "ClearSpeak Speaker" through WASAPI and read it back
+//!               with IOCTL_CLEARSPEAK_READ (what call apps play, as the engine sees it); same level / 440 Hz checks
 
 #[cfg(windows)]
 #[path = "../pipe.rs"]
@@ -40,6 +42,12 @@ fn main() -> anyhow::Result<()> {
     let level = args.iter().any(|a| a == "--level");
     let default_secs = if gap { 10 } else { 5 };
     let seconds: u64 = args.iter().find_map(|a| a.parse().ok()).unwrap_or(default_secs);
+
+    if args.iter().any(|a| a == "--speaker") {
+        let pass = speaker_readback(seconds, TONE_HZ, args.iter().any(|a| a == "--trace"))?;
+        println!("{}", if pass { "PASS" } else { "FAIL" });
+        std::process::exit(if pass { 0 } else { 1 });
+    }
 
     let mut stats_pipe = pipe::DriverPipe::new();
     let before = stats_pipe.stats();
@@ -124,6 +132,72 @@ fn main() -> anyhow::Result<()> {
     let pass = if level { analyse_level(&rec) } else if gap { analyse_gap(&rec, pipe_ok) } else { analyse_tone(&rec, pipe_ok, TONE_HZ) };
     println!("{}", if pass { "PASS" } else { "FAIL" });
     std::process::exit(if pass { 0 } else { 1 });
+}
+
+/// `--speaker`: render a 0.3-amplitude tone into "ClearSpeak Speaker" via WASAPI (shared mode) and read the driver's
+/// speaker ring back with IOCTL_CLEARSPEAK_READ every 10 ms (as the engine will). PASS when the read-back audio has the
+/// tone's level and its energy is at `tone_hz`. The endpoint volume must be at 100% for the level check.
+#[cfg(windows)]
+fn speaker_readback(seconds: u64, tone_hz: f32, trace: bool) -> anyhow::Result<bool> {
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    use audio_io::render::HardwareRender;
+    use dsp_core::{make_ring_buffer, FrameCounters, SAMPLE_RATE_HZ};
+
+    let mut p = pipe::DriverPipe::new();
+    let before = p.speaker_stats();
+    if before.is_none() {
+        println!("speaker counters unavailable: driver missing or without IOCTL_CLEARSPEAK_READ");
+    }
+
+    let (mut producer, consumer) = make_ring_buffer(2.0);
+    let mut phase = 0.0f32;
+    let step = 2.0 * std::f32::consts::PI * tone_hz / SAMPLE_RATE_HZ as f32;
+    let mut feed = |producer: &mut dsp_core::Producer<f32>| {
+        while producer.slots() > 0 {
+            let _ = producer.push(0.3 * phase.sin());
+            phase = (phase + step) % (2.0 * std::f32::consts::PI);
+        }
+    };
+    feed(&mut producer);
+    let _render = HardwareRender::start_by_name("ClearSpeak Speaker", consumer, Arc::new(FrameCounters::default()))?;
+    eprintln!("playing {tone_hz} Hz into 'ClearSpeak Speaker' and reading it back for {seconds}s...");
+
+    let mut rec: Vec<f32> = Vec::new();
+    let mut buf: Vec<i16> = Vec::new();
+    let (mut reads, mut failed) = (0u64, 0u64);
+    let t0 = Instant::now();
+    let mut n: u64 = 0;
+    while t0.elapsed() < Duration::from_secs(seconds + 1) {
+        feed(&mut producer);
+        match p.read_speaker(&mut buf, 4800) {
+            Some(_) => rec.extend(buf.iter().map(|&s| s as f32 / 32768.0)),
+            None => failed += 1,
+        }
+        reads += 1;
+        n += 1;
+        if let Some(wait) = (t0 + Duration::from_millis(10 * n)).checked_duration_since(Instant::now()) {
+            std::thread::sleep(wait);
+        }
+    }
+
+    match (before, p.speaker_stats()) {
+        (Some(b), Some(a)) => println!(
+            "driver speaker counters (this run): written {}, read {}, overflow drops {}, read calls {}, reader resets {}",
+            a.samples_written - b.samples_written, a.samples_read - b.samples_read, a.overflow_drops - b.overflow_drops,
+            a.read_calls - b.read_calls, a.reader_resets - b.reader_resets
+        ),
+        _ => println!("driver speaker counters: unavailable"),
+    }
+    let expected = (seconds + 1) as f32 * SAMPLE_RATE_HZ as f32;
+    println!("reads: {reads} ({failed} failed); samples read back: {} ({:.1}s, {:.0}% of real time)",
+        rec.len(), rec.len() as f32 / SAMPLE_RATE_HZ as f32, rec.len() as f32 * 100.0 / expected);
+    if trace {
+        print_windows(&rec);
+    }
+    let realtime_ok = rec.len() as f32 > expected * 0.9 && (rec.len() as f32) < expected * 1.05;
+    Ok(failed == 0 && realtime_ok && analyse_tone(&rec, true, tone_hz))
 }
 
 /// RMS of the 440 Hz component divided by the total RMS (1.0 = pure tone).

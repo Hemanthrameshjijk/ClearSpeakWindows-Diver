@@ -123,6 +123,9 @@ protected:
     CSaveData                   m_SaveData;
     ToneGenerator               m_ToneGenerator;
     CLEARSPEAK_PIPE_CURSOR        m_PipeCursor;
+    CLEARSPEAK_SPK_WRITER         m_SpkWriter;
+    BOOLEAN                     m_bFeedsSpeakerRing;    // render stream of "ClearSpeak Speaker"
+    ULONG                       m_SpkSampleFormat;      // CLEARSPEAK_SPK_FMT_*
     GUID                        m_SignalProcessingMode;
     BOOLEAN                     m_bEoSReceived;
     BOOLEAN                     m_bLastBufferRendered;
@@ -289,6 +292,11 @@ private:
     );
     
     VOID ReadBytes
+    (
+        _In_ ULONG ByteDisplacement
+    );
+
+    VOID FeedSpeakerRing
     (
         _In_ ULONG ByteDisplacement
     );

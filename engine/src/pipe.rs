@@ -32,6 +32,30 @@ pub struct PipeStats {
     pub max_backlog: u64,
 }
 
+/// CTL_CODE(FILE_DEVICE_UNKNOWN, 0x802, METHOD_BUFFERED, FILE_READ_ACCESS); must match clearspeakpipe.h.
+#[allow(dead_code)]
+const IOCTL_CLEARSPEAK_READ: u32 = (0x22 << 16) | (1 << 14) | (0x802 << 2);
+
+/// Speaker-ring counters appended after the ten `PipeStats` counters in CLEARSPEAK_PIPE_STATS.
+#[repr(C)]
+#[derive(Clone, Copy, Default, Debug)]
+#[allow(dead_code)]
+pub struct SpeakerStats {
+    pub samples_written: u64,
+    pub samples_read: u64,
+    pub overflow_drops: u64,
+    pub read_calls: u64,
+    pub reader_resets: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+#[allow(dead_code)]
+struct FullStats {
+    pipe: PipeStats,
+    speaker: SpeakerStats,
+}
+
 /// Handle to the driver's control device. Reopens itself if the driver is not
 /// there yet (or was reinstalled), so the engine can start before the driver.
 pub struct DriverPipe {
@@ -89,6 +113,63 @@ impl DriverPipe {
             )
         };
         if ok.is_err() || returned as usize != std::mem::size_of::<PipeStats>() { None } else { Some(st) }
+    }
+
+    /// Reads the speaker-ring counters (None if the driver is unavailable or predates the speaker ring).
+    #[allow(dead_code)]
+    pub fn speaker_stats(&mut self) -> Option<SpeakerStats> {
+        if self.handle.is_none() {
+            self.last_try = Instant::now() - Duration::from_secs(10);
+            self.try_open();
+        }
+        let h = self.handle?;
+        let mut st = FullStats::default();
+        let mut returned = 0u32;
+        let ok = unsafe {
+            DeviceIoControl(
+                h,
+                IOCTL_CLEARSPEAK_STATS,
+                None,
+                0,
+                Some(&mut st as *mut FullStats as *mut _),
+                std::mem::size_of::<FullStats>() as u32,
+                Some(&mut returned),
+                None,
+            )
+        };
+        if ok.is_err() || returned as usize != std::mem::size_of::<FullStats>() { None } else { Some(st.speaker) }
+    }
+
+    /// Reads what apps played into "ClearSpeak Speaker" (PCM16, mono, 48 kHz) into `out`, at most `max_samples`
+    /// (the driver accepts any size; 4800 = 100 ms is the intended maximum). Never blocks: returns Some(0) when nothing
+    /// is buffered, None when the driver is unavailable (or too old to know the IOCTL).
+    #[allow(dead_code)]
+    pub fn read_speaker(&mut self, out: &mut Vec<i16>, max_samples: usize) -> Option<usize> {
+        if self.handle.is_none() {
+            self.try_open();
+        }
+        let h = self.handle?;
+        out.resize(max_samples, 0);
+        let mut returned = 0u32;
+        let ok = unsafe {
+            DeviceIoControl(
+                h,
+                IOCTL_CLEARSPEAK_READ,
+                None,
+                0,
+                Some(out.as_mut_ptr() as *mut _),
+                (max_samples * 2) as u32,
+                Some(&mut returned),
+                None,
+            )
+        };
+        if ok.is_err() {
+            out.clear();
+            return None;
+        }
+        let n = returned as usize / 2;
+        out.truncate(n);
+        Some(n)
     }
 
     /// Sends mono 48 kHz samples (f32, -1..1) as PCM16. Returns false if the driver is unavailable.

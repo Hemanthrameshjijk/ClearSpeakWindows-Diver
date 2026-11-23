@@ -15,6 +15,9 @@
 #define _Use_decl_annotations_
 #endif
 #define PAGED_CODE()
+#ifndef _In_reads_bytes_
+#define _In_reads_bytes_(x)
+#endif
 
 typedef LONG NTSTATUS;
 typedef UCHAR KIRQL;
@@ -77,13 +80,17 @@ typedef DRIVER_OBJECT* PDRIVER_OBJECT;
 // Controllable fake clock (100 ns units) and fault injection, used by the tests.
 extern LONGLONG g_FakeInterruptTime;
 extern bool g_FailAlloc;
+extern int g_FailAllocAt;   // >0: only the Nth allocation from now fails
 extern int g_DeviceDeleted, g_LinkDeleted;
 static inline ULONGLONG KeQueryInterruptTime() { return (ULONGLONG)g_FakeInterruptTime; }
 
 static inline void KeInitializeSpinLock(KSPIN_LOCK* l) { *l = 0; }
 static inline void KeAcquireSpinLock(KSPIN_LOCK*, KIRQL* irql) { *irql = 0; }
 static inline void KeReleaseSpinLock(KSPIN_LOCK*, KIRQL) {}
-static inline void* ExAllocatePool2(ULONG, SIZE_T size, ULONG) { return g_FailAlloc ? nullptr : calloc(1, size); }
+static inline void* ExAllocatePool2(ULONG, SIZE_T size, ULONG) {
+    if (g_FailAllocAt > 0 && --g_FailAllocAt == 0) return nullptr;
+    return g_FailAlloc ? nullptr : calloc(1, size);
+}
 static inline void ExFreePoolWithTag(void* p, ULONG) { free(p); }
 static inline PIO_STACK_LOCATION IoGetCurrentIrpStackLocation(PIRP irp) { return &irp->Stack; }
 static inline void IoCompleteRequest(PIRP, int) {}

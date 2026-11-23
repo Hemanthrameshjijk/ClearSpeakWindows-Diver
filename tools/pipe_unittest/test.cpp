@@ -1,13 +1,17 @@
 // Unit tests for the driver's pipe logic (clearspeakpipe.cpp compiled as a normal program against tools/pipe_unittest/shim).
 // Covers what the VM tone tests can't: every sample rate / bit depth / channel count, underrun, engine timeout,
 // latency clamp, ring wrap-around, IOCTL validation, dispatch isolation and cleanup.
+// Speaker ring (IOCTL_CLEARSPEAK_READ): format conversion, resampling, overflow, stale reader, stream ownership.
 #include "../../driver/ClearSpeak/sysvad/EndpointsCommon/clearspeakpipe.cpp"
 #include <cstdio>
 #include <vector>
 #include <algorithm>
+#include <limits>
+#include <cstddef>
 
 LONGLONG g_FakeInterruptTime = 0;
 bool g_FailAlloc = false;
+int g_FailAllocAt = 0;
 int g_DeviceDeleted = 0, g_LinkDeleted = 0;
 
 static int g_checks = 0, g_failed = 0;
@@ -61,6 +65,11 @@ int main() {
     CHECK(ClearSpeakPipe_Init(&g_drv) == STATUS_INSUFFICIENT_RESOURCES, "alloc failure not reported");
     g_FailAlloc = false;
     CHECK(g_drv.MajorFunction[IRP_MJ_CREATE] == Forwarded, "dispatch table touched after failed init");
+    g_FailAllocAt = 2;      // mic ring ok, speaker ring fails
+    CHECK(ClearSpeakPipe_Init(&g_drv) == STATUS_INSUFFICIENT_RESOURCES, "speaker ring alloc failure not reported");
+    CHECK(g_Ring == nullptr && g_SpkRing == nullptr, "rings freed after failed init");
+    CHECK(g_drv.MajorFunction[IRP_MJ_CREATE] == Forwarded, "dispatch table touched after failed speaker alloc");
+    g_FailAllocAt = 0;
 
     // ---- init
     CHECK(ClearSpeakPipe_Init(&g_drv) == STATUS_SUCCESS, "init");
@@ -321,7 +330,11 @@ int main() {
     // ---- diagnostics counters
     {
         CLEARSPEAK_PIPE_STATS before = {}, after = {}; ULONG_PTR info = 0;
-        CHECK(IoctlOut(g_ControlDevice, IOCTL_CLEARSPEAK_STATS, &before, sizeof(before) - 1) == STATUS_BUFFER_TOO_SMALL, "stats: short buffer");
+        CHECK(IoctlOut(g_ControlDevice, IOCTL_CLEARSPEAK_STATS, &before, CLEARSPEAK_PIPE_STATS_V1_SIZE - 1) == STATUS_BUFFER_TOO_SMALL, "stats: short buffer");
+        CHECK(IoctlOut(g_ControlDevice, IOCTL_CLEARSPEAK_STATS, &before, CLEARSPEAK_PIPE_STATS_V1_SIZE, &info) == STATUS_SUCCESS &&
+              info == CLEARSPEAK_PIPE_STATS_V1_SIZE, "stats: old 80-byte struct still served (info %llu)", (unsigned long long)info);
+        CHECK(offsetof(CLEARSPEAK_PIPE_STATS, MaxBacklog) == 72 && offsetof(CLEARSPEAK_PIPE_STATS, SpkSamplesWritten) == 80,
+              "stats: old field offsets unchanged");
         CHECK(IoctlOut(g_ControlDevice, IOCTL_CLEARSPEAK_STATS, nullptr, sizeof(before)) == STATUS_BUFFER_TOO_SMALL, "stats: null buffer");
         CHECK(IoctlOut(g_ControlDevice, IOCTL_CLEARSPEAK_STATS, &before, sizeof(before), &info) == STATUS_SUCCESS && info == sizeof(before), "stats: ok");
         // scripted scenario: 2 writes, 1 sync, 1 underrun, 1 jump, 1 timeout
@@ -348,6 +361,149 @@ int main() {
         CHECK(after.MinBacklog != (ULONGLONG)-1, "stats: min backlog recorded");
     }
 
+    // ---- speaker ring (IOCTL_CLEARSPEAK_READ)
+    {
+        int A = 0, B = 0;                                       // two fake render streams (owner identities)
+        CLEARSPEAK_SPK_WRITER w; ClearSpeakPipe_ResetSpeakerWriter(&w);
+        std::vector<SHORT> rd(48000 * 2);
+        auto Read = [&](ULONG bytes) -> ULONG {
+            ULONG_PTR info = 12345;
+            NTSTATUS st = IoctlOut(g_ControlDevice, IOCTL_CLEARSPEAK_READ, rd.data(), bytes, &info);
+            CHECK(st == STATUS_SUCCESS, "read failed 0x%lx", (unsigned long)st);
+            CHECK((info & 1) == 0 && info <= bytes, "read info %llu for %lu bytes", (unsigned long long)info, (unsigned long)bytes);
+            return (ULONG)(info / 2);
+        };
+        auto Stats = [&]() { CLEARSPEAK_PIPE_STATS s = {}; IoctlOut(g_ControlDevice, IOCTL_CLEARSPEAK_STATS, &s, sizeof(s)); return s; };
+        auto Mono16 = [&](void* owner, const std::vector<SHORT>& v) {
+            ClearSpeakPipe_SpeakerWrite(owner, &w, (const UCHAR*)v.data(), (ULONG)v.size(), 1, 16, CLEARSPEAK_SPK_FMT_PCM, 48000);
+        };
+        auto Ramp = [&](int from, int n) { std::vector<SHORT> v(n); for (int i = 0; i < n; i++) v[i] = (SHORT)((from + i) & 0x7FFF); return v; };
+
+        CLEARSPEAK_PIPE_STATS s0 = Stats();
+        CHECK(IOCTL_CLEARSPEAK_READ == 0x00226008u, "IOCTL_CLEARSPEAK_READ code 0x%08lx", (unsigned long)IOCTL_CLEARSPEAK_READ);
+
+        // validation / empty
+        { ULONG_PTR info = 9; CHECK(IoctlOut(g_ControlDevice, IOCTL_CLEARSPEAK_READ, nullptr, 9600, &info) == STATUS_INVALID_PARAMETER && info == 0, "read: null buffer"); }
+        CHECK(Read(0) == 0, "read: zero-length buffer");
+        CHECK(Read(9600) == 0, "read: nothing buffered -> 0 bytes, no block");
+
+        // mono 16-bit passthrough, partial reads, odd length
+        Mono16(&A, Ramp(100, 1000));
+        CHECK(Read(5) == 2 && rd[0] == 100 && rd[1] == 101, "read: odd length rounds down to whole samples");
+        { ULONG n = Read(9600); bool ok = n == 998; for (ULONG i = 0; ok && i < n; i++) ok = rd[i] == (SHORT)(102 + i); CHECK(ok, "read: mono ramp in order (%lu)", (unsigned long)n); }
+        Mono16(&A, Ramp(0, 6000));
+        CHECK(Read(9600) == 4800 && rd[0] == 0 && rd[4799] == 4799, "read: capped at the output buffer (100 ms)");
+        CHECK(Read(9600) == 1200 && rd[0] == 4800, "read: remainder");
+
+        // stereo average, 24/32-bit, float
+        {
+            SHORT st[4] = { 1000, 3000, -1000, -3001 };
+            ClearSpeakPipe_SpeakerWrite(&A, &w, (const UCHAR*)st, 2, 2, 16, CLEARSPEAK_SPK_FMT_PCM, 48000);
+            CHECK(Read(9600) == 2 && rd[0] == 2000 && rd[1] == -2000, "stereo 16 average: %d %d", rd[0], rd[1]);
+            UCHAR p24[6] = { 0x11, 0x34, 0x12, 0x00, 0x00, 0x80 };       // 0x123411, -8388608
+            ClearSpeakPipe_SpeakerWrite(&A, &w, p24, 2, 1, 24, CLEARSPEAK_SPK_FMT_PCM, 48000);
+            CHECK(Read(9600) == 2 && rd[0] == 0x1234 && rd[1] == -32768, "24-bit: %d %d", rd[0], rd[1]);
+            LONG p32[2] = { 0x7FFFFFFF, (LONG)0xC0000000 };
+            ClearSpeakPipe_SpeakerWrite(&A, &w, (const UCHAR*)p32, 1, 2, 32, CLEARSPEAK_SPK_FMT_PCM, 48000);
+            CHECK(Read(9600) == 1 && rd[0] == (32767 - 16384) / 2, "32-bit stereo: %d", rd[0]);
+            float fl[8] = { 0.5f, -1.0f, 2.0f, -3.0f, 0.0f, 1e-9f, std::numeric_limits<float>::quiet_NaN(), -0.25f };
+            ClearSpeakPipe_SpeakerWrite(&A, &w, (const UCHAR*)fl, 8, 1, 32, CLEARSPEAK_SPK_FMT_FLOAT, 48000);
+            CHECK(Read(9600) == 8 && rd[0] == 16384 && rd[1] == -32768 && rd[2] == 32767 && rd[3] == -32768 && rd[4] == 0 &&
+                  rd[5] == 0 && rd[6] == 0 && rd[7] == -8192, "float: %d %d %d %d %d %d %d %d", rd[0], rd[1], rd[2], rd[3], rd[4], rd[5], rd[6], rd[7]);
+            float fst[2] = { 1.0f, 0.0f };
+            ClearSpeakPipe_SpeakerWrite(&A, &w, (const UCHAR*)fst, 1, 2, 32, CLEARSPEAK_SPK_FMT_FLOAT, 48000);
+            CHECK(Read(9600) == 1 && rd[0] == 16383, "float stereo average: %d", rd[0]);
+            ClearSpeakPipe_SpeakerWrite(&A, &w, (const UCHAR*)fst, 1, 1, 16, CLEARSPEAK_SPK_FMT_FLOAT, 48000);   // invalid combos ignored
+            ClearSpeakPipe_SpeakerWrite(&A, &w, (const UCHAR*)fst, 1, 1, 8, CLEARSPEAK_SPK_FMT_PCM, 48000);
+            ClearSpeakPipe_SpeakerWrite(&A, &w, (const UCHAR*)fst, 1, 0, 16, CLEARSPEAK_SPK_FMT_PCM, 48000);
+            ClearSpeakPipe_SpeakerWrite(&A, &w, (const UCHAR*)fst, 1, 1, 16, CLEARSPEAK_SPK_FMT_PCM, 0);
+            ClearSpeakPipe_SpeakerWrite(&A, &w, nullptr, 1, 1, 16, CLEARSPEAK_SPK_FMT_PCM, 48000);
+            CHECK(Read(9600) == 0, "unsupported formats write nothing");
+        }
+
+        // nearest-sample resampling (the speaker tables only offer 48 kHz, but the code copes)
+        {
+            const ULONG rates[] = { 8000, 16000, 24000, 44100, 96000, 192000 };
+            for (ULONG rate : rates) {
+                ClearSpeakPipe_ResetSpeakerWriter(&w);
+                std::vector<SHORT> v(rate / 10); for (size_t i = 0; i < v.size(); i++) v[i] = (SHORT)i;
+                ULONG total = 0;
+                for (int k = 0; k < 10; k++) {          // 1 s in 100 ms chunks, reading as we go
+                    ClearSpeakPipe_SpeakerWrite(&A, &w, (const UCHAR*)v.data(), (ULONG)v.size(), 1, 16, CLEARSPEAK_SPK_FMT_PCM, rate);
+                    total += Read(9600 * 2);
+                }
+                CHECK(total == 48000, "resample %lu Hz -> %lu samples per second", (unsigned long)rate, (unsigned long)total);
+            }
+            ClearSpeakPipe_ResetSpeakerWriter(&w);
+        }
+
+        // overflow: reader alive but too slow -> oldest dropped, newest second kept
+        {
+            CLEARSPEAK_PIPE_STATS a = Stats();
+            Read(0);                                     // heartbeat
+            for (int k = 0; k < 15; k++) { Mono16(&A, Ramp(k * 4800, 4800)); Tick(10); }
+            CLEARSPEAK_PIPE_STATS b = Stats();
+            CHECK(b.SpkOverflowDrops - a.SpkOverflowDrops == 24000, "overflow drops %llu", (unsigned long long)(b.SpkOverflowDrops - a.SpkOverflowDrops));
+            ULONG n = Read(48000 * 2);
+            CHECK(n == 48000 && rd[0] == (SHORT)(24000 & 0x7FFF) && rd[47999] == (SHORT)(71999 & 0x7FFF), "overflow keeps the newest second (%lu, %d)", (unsigned long)n, rd[0]);
+        }
+
+        // stale reader: no READ for 250 ms -> ring reset, returning reader gets only fresh audio
+        {
+            CLEARSPEAK_PIPE_STATS a = Stats();
+            Read(0);
+            Mono16(&A, Ramp(0, 480));
+            Tick(249);
+            Mono16(&A, Ramp(480, 480));
+            CHECK(Read(9600) == 960, "249 ms gap: still the same reader");
+            Mono16(&A, Ramp(0, 480));
+            Tick(250);
+            Mono16(&A, Ramp(1000, 480));               // writer notices the reader is gone
+            Mono16(&A, Ramp(2000, 480));
+            CHECK(Read(9600) == 0, "returning reader starts empty (no stale audio)");
+            Mono16(&A, Ramp(3000, 480));
+            CHECK(Read(9600) == 480 && rd[0] == 3000, "returning reader gets fresh audio");
+            Mono16(&A, Ramp(4000, 480));
+            Tick(300);                                  // reader gone, no writes either
+            CHECK(Read(9600) == 0, "data left from before the reader vanished is discarded");
+            CLEARSPEAK_PIPE_STATS b = Stats();
+            CHECK(b.SpkReaderResets - a.SpkReaderResets == 2, "reader resets %llu", (unsigned long long)(b.SpkReaderResets - a.SpkReaderResets));
+            CHECK(b.SpkOverflowDrops == a.SpkOverflowDrops, "no-reader discards are not overflow");
+            // never-read: render without any reader keeps nothing
+            Tick(300);
+            for (int k = 0; k < 30; k++) Mono16(&A, Ramp(0, 4800));
+            CLEARSPEAK_PIPE_STATS c = Stats();
+            CHECK(c.SpkOverflowDrops == b.SpkOverflowDrops, "no reader: nothing counted as overflow");
+            CHECK(Read(9600) == 0, "no reader: nothing buffered");
+        }
+
+        // one render stream feeds the ring at a time
+        {
+            Read(0);
+            Mono16(&A, Ramp(100, 10));
+            Mono16(&B, Ramp(900, 10));                  // A owns it: ignored
+            CHECK(Read(9600) == 10 && rd[0] == 100, "second stream ignored while the first plays");
+            ClearSpeakPipe_SpeakerRelease(&B);          // not the owner: no effect
+            Mono16(&B, Ramp(900, 10));
+            CHECK(Read(9600) == 0, "release by a non-owner does nothing");
+            ClearSpeakPipe_SpeakerRelease(&A);
+            Mono16(&B, Ramp(900, 10));
+            CHECK(Read(9600) == 10 && rd[0] == 900, "after release another stream takes over");
+            Tick(40);
+            Mono16(&A, Ramp(100, 10));
+            CHECK(Read(9600) == 0, "owner silent 40 ms: still owns");
+            Tick(20);
+            Mono16(&A, Ramp(100, 10));
+            CHECK(Read(9600) == 10 && rd[0] == 100, "owner stalled 50+ ms: taken over");
+            ClearSpeakPipe_SpeakerRelease(&A);
+        }
+
+        CLEARSPEAK_PIPE_STATS s1 = Stats();
+        CHECK(s1.SpkReadCalls > s0.SpkReadCalls && s1.SpkSamplesRead > s0.SpkSamplesRead &&
+              s1.SpkSamplesWritten >= s1.SpkSamplesRead, "speaker counters move");
+        CHECK(s1.WriteCalls == s0.WriteCalls && s1.ReadCalls == s0.ReadCalls, "speaker traffic leaves mic counters alone");
+    }
+
     // ---- cleanup
     {
         int d = g_DeviceDeleted, l = g_LinkDeleted;
@@ -358,6 +514,10 @@ int main() {
         CLEARSPEAK_PIPE_CURSOR c; ClearSpeakPipe_ResetCursor(&c);
         UCHAR o[64]; memset(o, 0x77, sizeof(o));
         ClearSpeakPipe_ReadFrames(&c, o, 32, 1, 16, 48000);      // late reader after unload: silence, no crash
+        CHECK(g_SpkRing == nullptr, "cleanup must free the speaker ring");
+        CLEARSPEAK_SPK_WRITER w; ClearSpeakPipe_ResetSpeakerWriter(&w);
+        ClearSpeakPipe_SpeakerWrite(&c, &w, o, 16, 1, 16, CLEARSPEAK_SPK_FMT_PCM, 48000);   // late render after unload: no crash
+        ClearSpeakPipe_SpeakerRelease(&c);
         bool z = true; for (UCHAR b : o) z &= (b == 0);
         CHECK(z, "reader after cleanup gets silence");
         ClearSpeakPipe_Cleanup();                                // idempotent

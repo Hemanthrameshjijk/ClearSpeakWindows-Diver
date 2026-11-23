@@ -6,10 +6,27 @@ trimmed to one speaker and one microphone endpoint, with these ClearSpeak change
 - `TabletAudioSample/minipairs.h`: only `SpeakerMiniports` and `MicInMiniports` are registered.
 - `TabletAudioSample/ComponentizedAudioSample.inx`: hardware ID `Root\ClearSpeak`, provider/names "ClearSpeak Speaker", "ClearSpeak Microphone".
 - `EndpointsCommon/clearspeakpipe.{h,cpp}` (new): control device `\\.\ClearSpeakPipe` plus a non-paged ring.
-- `EndpointsCommon/minwavertstream.cpp`: capture `WriteBytes` reads the pipe instead of generating a sine.
+- `EndpointsCommon/minwavertstream.cpp`: capture `WriteBytes` reads the pipe instead of generating a sine; render
+  `ReadBytes` of the speaker endpoint copies what apps play into the speaker ring (`FeedSpeakerRing`).
+- `EndpointsCommon/speakerwavtable.h`: "ClearSpeak Speaker" only offers 48 kHz 16-bit PCM (stereo; mono too on the
+  host/loopback pins), so the speaker ring needs no kernel resampling.
 - `adapter.cpp`: creates/removes the pipe in `DriverEntry`/`DriverUnload`.
 
 Output is `ClearSpeak.sys` (renamed from ClearNAI on 17 Nov 2026; Release x64 rebuilt, test-signed with "CN=ClearSpeak Test Signing", pipe unit tests pass; not yet re-tested on a PC or VM). The install script removes a device left by the old ClearNAI driver (`RootClearNAI`). See `docs/SIGNING.md`.
+
+## Speaker read-back (`IOCTL_CLEARSPEAK_READ`, branch `feature/speaker-read`)
+
+The engine reads what call apps play into "ClearSpeak Speaker" with `IOCTL_CLEARSPEAK_READ` (0x802, `FILE_READ_ACCESS`):
+PCM16 / mono / 48 kHz, returns at once with whatever is buffered (possibly 0 bytes), up to the output length (ask for
+<= 100 ms = 9600 bytes). Source: the render stream's position update averages the channels into a second 1 s
+non-paged ring (own spin lock). Render never waits: a full ring drops its oldest samples (`SpkOverflowDrops`); with no
+READ for 250 ms the reader counts as gone and the ring is kept empty, so a new reader starts with current audio (its
+first READ returns 0 bytes). One render stream feeds the ring at a time (normally the shared-mode engine's system
+stream); another stream (offload/exclusive) takes over only after the first stops or stalls 50 ms. Endpoint volume /
+mute are not applied (the topology volume node only stores the level). `IOCTL_CLEARSPEAK_STATS` gained five appended
+counters (`Spk*`); a caller passing the old 80-byte struct still gets exactly that. Unit tests cover it (2289 checks);
+`pipetest --speaker` plays a 440 Hz tone into the speaker and reads it back (needs the driver: VM only, not yet run).
+Built Debug/Release x64 in `C:\b\sysvad_spk` with 0 warnings; not installed, signed or tested on a VM yet.
 
 ## Build (VS 2026 + WDK 28000.2526 + SDK 10.0.28000)
 
@@ -38,9 +55,9 @@ Soak (2 min, 1198 windows of 100 ms): every window at the right level with a cle
 (`IOCTL_CLEARSPEAK_STATS`, printed by pipetest) showed an 84 ms stall of the *test writer*, which the driver handled as designed
 (underrun -> rebuffer). The driver now keeps a 30 ms jitter margin and, after running dry, outputs silence until it is rebuilt.
 
-Logic tests that need no VM: `tools/pipe_unittest` compiles `clearspeakpipe.cpp` against kernel stand-ins and checks 2074 cases
+Logic tests that need no VM: `tools/pipe_unittest` compiles `clearspeakpipe.cpp` against kernel stand-ins and checks 2289 cases
 (8 sample rates x 4 bit depths x 3 channel counts, underrun/rebuffer, engine timeout, latency clamp, ring wrap, IOCTL validation,
-dispatch isolation, cleanup, counters): `g++ -std=c++17 -Wno-unknown-pragmas -Wno-multichar -Ishim test.cpp && ./a.exe`.
+dispatch isolation, cleanup, counters, plus the speaker ring: formats, resampling, overflow, stale reader, ownership): `g++ -std=c++17 -Wno-unknown-pragmas -Wno-multichar -Ishim test.cpp && ./a.exe`.
 
 Final VM run on the rebuffering driver with counters (Driver Verifier on): 2-minute soak 1199/1199 clean windows, 0 jumps,
 whole-recording tone share 100%; two apps both 100%; engine-restart gap: 1 engine-timeout counted, silence 1.4 s, tone resumed.
