@@ -26,7 +26,9 @@ stream); another stream (offload/exclusive) takes over only after the first stop
 mute are not applied (the topology volume node only stores the level). `IOCTL_CLEARSPEAK_STATS` gained five appended
 counters (`Spk*`); a caller passing the old 80-byte struct still gets exactly that. Unit tests cover it (2289 checks);
 `pipetest --speaker` plays a 440 Hz tone into the speaker and reads it back (needs the driver: VM only, not yet run).
-Built Debug/Release x64 in `C:\b\sysvad_spk` with 0 warnings; not installed, signed or tested on a VM yet.
+Built Debug/Release x64 in `C:\b\sysvad_spk` with 0 warnings. 23 Nov 2026: Release x64 rebuilt from this branch
+(`C:\b\cs_spk`), catalogued and test-signed ("CN=ClearSpeak Test Signing", DriverVer 11/23/2026) into `dist/driver`;
+pipe unit tests pass (2289 checks). Not yet installed or tested on a PC/VM.
 
 ## Build (VS 2026 + WDK 28000.2526 + SDK 10.0.28000)
 

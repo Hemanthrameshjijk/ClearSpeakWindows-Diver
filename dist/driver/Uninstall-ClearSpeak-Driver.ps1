@@ -21,7 +21,9 @@ if ($DevconPath -and (Test-Path $DevconPath)) {
 } else {
     Write-Host 'devcon.exe not found: remove the device "ClearSpeak Virtual Audio Device" in Device Manager (Sound, video and game controllers) instead.'
 }
-$oem = (pnputil /enum-drivers | Out-String) -split "(?m)^\s*$" | Where-Object { $_ -match 'componentizedaudiosample' } |
+# Only our packages: other products are built from the same Microsoft sample and have the same INF name.
+$oem = (pnputil /enum-drivers | Out-String) -split "(?m)^\s*$" |
+    Where-Object { $_ -match 'componentizedaudiosample' -and $_ -match 'Provider Name:\s+(ClearSpeak|ClearNAI)\b' } |
     ForEach-Object { if ($_ -match 'Published Name:\s+(oem\d+\.inf)') { $Matches[1] } }
 foreach ($o in $oem) { Run "delete driver package $o" { pnputil /delete-driver $o /uninstall } }
 foreach ($store in 'Root', 'TrustedPublisher') {

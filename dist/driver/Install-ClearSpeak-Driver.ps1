@@ -69,8 +69,20 @@ Run 'trust the ClearSpeak test certificate (Trusted Root + Trusted Publishers)' 
 if ((& $DevconPath find 'Root\ClearNAI' | Out-String) -match 'ROOT\\') {
     Run 'remove the old ClearNAI device (renamed to ClearSpeak)' { & $DevconPath remove 'Root\ClearNAI' }
 }
+# Its driver package too (provider "ClearNAI"), so Windows cannot bind it again later. ClearSpeak packages are left to
+# pnputil below, which replaces an older one with this version.
+$oldPkgs = (pnputil /enum-drivers | Out-String) -split "(?m)^\s*$" |
+    Where-Object { $_ -match 'componentizedaudiosample' -and $_ -match 'Provider Name:\s+ClearNAI\b' } |
+    ForEach-Object { if ($_ -match 'Published Name:\s+(oem\d+\.inf)') { $Matches[1] } }
+foreach ($o in $oldPkgs) { Run "delete the old ClearNAI driver package $o" { pnputil /delete-driver $o /uninstall } }
 Run 'add the driver package to the driver store' { pnputil /add-driver $inf /install }
-Run 'create the ClearSpeak device (Root\ClearSpeak) and bind the driver' { & $DevconPath install $inf 'Root\ClearSpeak' }
+# Upgrading (a ClearSpeak device already exists): update it in place. `devcon install` would add a SECOND device, i.e. two
+# "ClearSpeak Microphone"s.
+if ((& $DevconPath find 'Root\ClearSpeak' | Out-String) -match 'ROOT\\') {
+    Run 'update the existing ClearSpeak device to this driver' { & $DevconPath update $inf 'Root\ClearSpeak' }
+} else {
+    Run 'create the ClearSpeak device (Root\ClearSpeak) and bind the driver' { & $DevconPath install $inf 'Root\ClearSpeak' }
+}
 if (-not $DryRun) {
     Start-Sleep -Seconds 8
     Write-Host ''
